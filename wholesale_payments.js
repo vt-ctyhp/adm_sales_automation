@@ -6,6 +6,7 @@ const SP = PropertiesService.getScriptProperties();
 
 // ============================= CONFIG =============================
 const WH_LEDGER_TAB_NAME         = SP.getProperty('WH_LEDGER_TAB_NAME') || '400_payments ledger';
+const WH_CRM_TAB_NAME            = SP.getProperty('WH_CRM_TAB_NAME') || '01_CRM';
 const WH_DEFAULT_SHIP_PER_ORDER  = num_(SP.getProperty('WH_DEFAULT_SHIP_PER_ORDER'), 50);
 const WH_SHIP_THRESHOLD_SUBTOTAL = num_(SP.getProperty('WH_SHIP_THRESHOLD_SUBTOTAL'), 2000);
 const WH_DOC_PREFIX              = (SP.getProperty('WH_DOC_PREFIX') || 'ADM').replace(/\s+/g,'').toUpperCase();
@@ -167,6 +168,23 @@ function readActiveContext_(){
     }
   }
 
+  if (ctx.customerId || ctx.companyName) {
+    const crm = findCrmRow_(ctx.customerId, ctx.companyName);
+    if (crm) {
+      ctx = {
+        ...ctx,
+        customerId: crm.customerId || ctx.customerId || '',
+        companyName: crm.companyName || ctx.companyName || '',
+        contactName: crm.contactName || ctx.contactName || '',
+        address: crm.address || ctx.address || '',
+        trackerUrl: crm.trackerUrl || ctx.trackerUrl || ''
+      };
+      dbg('readActiveContext_: enriched from CRM', { sheet: WH_CRM_TAB_NAME, merged: ctx });
+    } else {
+      dbg('readActiveContext_: CRM lookup returned no match', { sheet: WH_CRM_TAB_NAME, customerId: ctx.customerId, companyName: ctx.companyName });
+    }
+  }
+
   return ctx;
 }
 
@@ -233,6 +251,87 @@ function findOrdersRowBySO_(soNumber){
     }
   }
   return null;
+}
+
+function findCrmRow_(customerId, companyName){
+  const tab = String(WH_CRM_TAB_NAME||'').trim();
+  if (!tab) return null;
+  const ss = SpreadsheetApp.getActive();
+  const sh = ss.getSheetByName(tab);
+  if (!sh) { dbg('findCrmRow_: sheet not found', tab); return null; }
+  const lr = sh.getLastRow(), lc = sh.getLastColumn();
+  if (lr < 2) { dbg('findCrmRow_: sheet empty', {tab, lr}); return null; }
+
+  const headers = sh.getRange(1,1,1,lc).getDisplayValues()[0].map(s=>String(s||'').trim());
+  const H = hIndex_(headers);
+  const cCID = pickH_(H, CUSTID_ALIASES);
+  const cCMP = pickH_(H, COMPANY_ALIASES);
+  const cCON = pickH_(H, CONTACT_ALIASES);
+  const cFirst = pickH_(H, CONTACT_FIRST_ALIASES);
+  const cLast  = pickH_(H, CONTACT_LAST_ALIASES);
+  const cAddr  = pickH_(H, ADDRESS_ALIASES);
+  const cStreet= pickH_(H, STREET_ALIASES);
+  const cCity  = pickH_(H, CITY_ALIASES);
+  const cState = pickH_(H, STATE_ALIASES);
+  const cZip   = pickH_(H, ZIP_ALIASES);
+  const cTracker = pickH_(H, TRACKER_ALIASES);
+
+  const wantId = String(customerId||'').trim().toLowerCase();
+  const wantName = String(companyName||'').trim().toLowerCase();
+  const vals = sh.getRange(2,1,lr-1,lc).getDisplayValues();
+
+  let fallback = null;
+  for (let i=0;i<vals.length;i++){
+    const row = vals[i];
+    const id = cCID ? String(row[cCID-1]||'').trim() : '';
+    const name = cCMP ? String(row[cCMP-1]||'').trim() : '';
+    const idLc = id.toLowerCase();
+    const nameLc = name.toLowerCase();
+    const matchId = wantId && idLc && idLc === wantId;
+    const matchName = !matchId && wantName && nameLc && nameLc === wantName;
+    if (!matchId && !matchName) {
+      if (!fallback && wantName && nameLc.includes(wantName)) fallback = {row, id, name};
+      continue;
+    }
+    return buildCrmPayload_(row, {id, name, cCON, cFirst, cLast, cAddr, cStreet, cCity, cState, cZip, cTracker});
+  }
+
+  if (fallback) {
+    dbg('findCrmRow_: using partial match', {tab, name: fallback.name});
+    return buildCrmPayload_(fallback.row, {
+      id: fallback.id,
+      name: fallback.name,
+      cCON, cFirst, cLast, cAddr, cStreet, cCity, cState, cZip, cTracker
+    });
+  }
+  return null;
+}
+
+function buildCrmPayload_(row, cols){
+  const {
+    id, name, cCON, cFirst, cLast, cAddr, cStreet, cCity, cState, cZip, cTracker
+  } = cols;
+  const out = {
+    customerId: String(id||'').trim(),
+    companyName: String(name||'').trim(),
+    contactName: cCON ? String(row[cCON-1]||'').trim() : ''
+  };
+  if (!out.contactName) {
+    const first = cFirst ? String(row[cFirst-1]||'').trim() : '';
+    const last  = cLast  ? String(row[cLast-1]||'').trim() : '';
+    out.contactName = [first, last].filter(Boolean).join(' ').trim();
+  }
+  let address = cAddr ? String(row[cAddr-1]||'').trim() : '';
+  if (!address) {
+    const street = cStreet?String(row[cStreet-1]||'').trim():'';
+    const city   = cCity?String(row[cCity-1]||'').trim():'';
+    const state  = cState?String(row[cState-1]||'').trim():'';
+    const zip    = cZip?String(row[cZip-1]||'').trim():'';
+    address = [street, [city, state].filter(Boolean).join(', '), zip].filter(Boolean).join(', ');
+  }
+  out.address = address;
+  out.trackerUrl = cTracker ? String(row[cTracker-1]||'').trim() : '';
+  return out;
 }
 
 // ============================= LOOKUPS =============================
@@ -720,9 +819,6 @@ function buildItemRows_(lines, shipping){
       money_( (ln.qty||0)*(ln.amt||0) )
     ]);
   });
-  (shipping||[]).forEach(s=>{
-    rows.push(['', String(s.label||'Shipping'), '', money_( num_(s.amount,0) )]);
-  });
   if (!rows.length) rows.push(['','','','']);
   return rows;
 }
@@ -733,7 +829,7 @@ function injectItemsTable_(body, placeholder, rows){
   if (range) {
     const paragraph = range.getElement().getParent().asParagraph();
     const parent = paragraph.getParent();
-    const table = makeTable_(headers, rows);
+    const table = makeTable_(headers, rows, { includeHeader: false });
     if (parent && parent.getType && parent.getType() === DocumentApp.ElementType.BODY_SECTION) {
       const idx = body.getChildIndex(paragraph);
       paragraph.removeFromParent();
@@ -756,7 +852,7 @@ function injectItemsTable_(body, placeholder, rows){
       tbl.setBorderWidth(0.5);
     }
   } else {
-    body.appendTable(makeTable_(headers, rows)).setBorderWidth(0.5);
+    body.appendTable(makeTable_(headers, rows, { includeHeader: false })).setBorderWidth(0.5);
   }
 }
 
@@ -890,19 +986,41 @@ function replaceRegex_(body, regex, repl){
     if (regex.test(t)) p.setText(t.replace(regex, repl));
   });
 }
-function makeTable_(headers, rows){
+function makeTable_(headers, rows, opts){
+  const includeHeader = !(opts && opts.includeHeader === false);
+  const cols = (Array.isArray(headers) && headers.length) ? headers.length : ((rows && rows[0] && rows[0].length) || 1);
   const temp = DocumentApp.create('tmp-tbl');
   const body = temp.getBody();
-  const tb = body.appendTable([headers.map(h=>String(h||''))]);
+  const tb = body.appendTable([new Array(cols).fill('')]);
+
   const data = Array.isArray(rows) ? rows : [];
-  data.forEach(r=>{
-    const tr = tb.appendTableRow();
-    for (let i=0; i<headers.length; i++) {
-      tr.appendTableCell(String((r && r[i]) || ''));
+  let dataIndex = 0;
+
+  if (includeHeader) {
+    const headerRow = tb.getRow(0);
+    for (let i=0;i<cols;i++) {
+      const val = (Array.isArray(headers) && headers[i] != null) ? String(headers[i]) : '';
+      headerRow.getChild(i).asTableCell().setText(val);
     }
-  });
+  } else if (data.length) {
+    const first = tb.getRow(0);
+    for (let i=0;i<cols;i++) {
+      const val = (data[0] && data[0][i] != null) ? String(data[0][i]) : '';
+      first.getChild(i).asTableCell().setText(val);
+    }
+    dataIndex = 1;
+  }
+
+  for (let rIndex = dataIndex; rIndex < data.length; rIndex++) {
+    const tr = tb.appendTableRow();
+    for (let i=0;i<cols;i++) {
+      const cellVal = (data[rIndex] && data[rIndex][i] != null) ? data[rIndex][i] : '';
+      tr.appendTableCell(String(cellVal));
+    }
+  }
+
   const copy = tb.copy();
-  const id=temp.getId();
+  const id = temp.getId();
   temp.saveAndClose();
   DriveApp.getFileById(id).setTrashed(true);
   return copy;
