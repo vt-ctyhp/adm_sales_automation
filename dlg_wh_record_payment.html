@@ -17,6 +17,7 @@
     table { width:100%; border-collapse:collapse; margin-top:6px; }
     th, td { border:1px solid #ddd; padding:6px; text-align:left; }
     th { background:#fafafa; }
+    .num { text-align:right; font-variant-numeric:tabular-nums; }
     .row { display:flex; gap:8px; align-items:center; }
     .actions { display:flex; gap:10px; justify-content:flex-end; margin-top:14px; }
     details { background:#fafafa; padding:10px; border:1px solid #e5e5e5; }
@@ -98,7 +99,7 @@
     <div class="full">
       <h3>Line Items (auto 1 row per selected SO; description from “Product Description”)</h3>
       <table>
-        <thead><tr><th style="width:160px">SO</th><th>Description</th><th style="width:80px">Qty</th><th style="width:120px">Amount</th><th style="width:40px"></th></tr></thead>
+        <thead><tr><th style="width:160px">SO</th><th>Description</th><th style="width:80px">Qty</th><th style="width:120px">Rate</th><th style="width:120px">Line Total</th><th style="width:40px"></th></tr></thead>
         <tbody id="lineBody"></tbody>
       </table>
       <button type="button" onclick="addLine()">+ Add Line</button>
@@ -119,11 +120,11 @@
       <div class="grid">
         <div>
           <label>Payment Amount</label>
-          <input id="pmtAmt" type="number" step="0.01" value="0" oninput="state.pmt.amount=Number(this.value||0); if(state.evenSplit){evenSplit();}">
+          <input id="pmtAmt" type="number" step="0.01" value="0" oninput="state.pmt.amount=Number(this.value||0); if(state.evenSplit){evenSplit();} renderFeeSummary();">
         </div>
         <div>
           <label>Payment Method</label>
-          <select id="pmtMethod" onchange="state.pmt.method=this.value">
+          <select id="pmtMethod" onchange="state.pmt.method=this.value.trim(); renderFeeSummary();">
             <option value="">-- Select --</option>
             <option>Wire</option>
             <option>ACH</option>
@@ -147,6 +148,7 @@
           <input id="pmtDT" type="datetime-local" oninput="state.pmt.dateTimeISO=this.value">
         </div>
       </div>
+      <div class="hint" id="feeInfo" style="margin-top:6px;"></div>
     </div>
 
     <div class="full">
@@ -192,6 +194,44 @@ const state = {
 };
 
 function $(id){ return document.getElementById(id); }
+function fmtMoney(n){ return '$' + Number(n||0).toFixed(2); }
+function round2(n){ return Math.round((Number(n)||0)*100)/100; }
+function feeKey(method){ return (method||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim(); }
+function getFeeRule(method){
+  const rules = window._feeRules || {};
+  const methods = rules.methods || {};
+  const key = feeKey(method);
+  if (key && methods[key]) return methods[key];
+  return rules.default || null;
+}
+function renderFeeSummary(){
+  const el = $('feeInfo');
+  if (!el) return;
+  const amount = Number(state.pmt.amount||0);
+  const method = state.pmt.method || '';
+  if (!(amount>0)) {
+    el.textContent = method ? 'Enter an amount to estimate fees.' : '';
+    return;
+  }
+  const rule = getFeeRule(method);
+  if (!rule) {
+    el.textContent = method ? 'Fees not configured for this method.' : 'Select a payment method to estimate fees.';
+    return;
+  }
+  const pct = Number(rule.pct||0);
+  const flat = Number(rule.flat||0);
+  const fee = round2((amount * (pct/100)) + flat);
+  const net = round2(amount - fee);
+  const pieces = [`Estimated fees: ${fmtMoney(fee)}`];
+  if (pct) {
+    pieces.push(`(${pct}%${flat ? ` + ${fmtMoney(flat)} flat` : ''})`);
+  } else if (flat) {
+    pieces.push(`(${fmtMoney(flat)} flat)`);
+  }
+  pieces.push(`Net: ${fmtMoney(net)}`);
+  el.textContent = pieces.join(' ');
+}
+window._feeRules = window._feeRules || {};
 function chip(so, sel){
   const s=document.createElement('span');
   s.className='chip'+(sel?' sel':''); s.textContent=so;
@@ -203,7 +243,10 @@ function renderSO(){
   const chips=$('chips'); chips.innerHTML='';
   (window._knownSOs||[]).forEach(o=>chips.appendChild(chip(o.soNumber, state.selectedSOs.has(o.soNumber))));
   const sel = Array.from(state.selectedSOs); $('selSOs').textContent = sel.join(', ')||'(none)';
-  renderAlloc(); renderLines(); renderShip();
+  if (state.evenSplit) { evenSplit(); } else { renderAlloc(); }
+  renderLines();
+  renderShip();
+  renderFeeSummary();
 }
 
 function mergeTypedSOs(text){
@@ -218,6 +261,9 @@ function syncLinesWithSOs(){
     if (!have.has(so)) state.lines.push({ so, desc: known[so]||'', qty:1, amt:0 });
   });
   state.lines = state.lines.filter(l => !l.so || state.selectedSOs.has(l.so));
+  const nextAlloc = {};
+  state.selectedSOs.forEach(so=>{ nextAlloc[so] = Number(state.allocations[so]||0); });
+  state.allocations = nextAlloc;
 }
 
 function renderAlloc(){
@@ -230,31 +276,40 @@ function renderAlloc(){
   const body=$('allocBody'); body.innerHTML='';
   const arr=Array.from(state.selectedSOs);
   if (!arr.length) { body.innerHTML='<tr><td colspan="2" class="hint">Select SOs to allocate.</td></tr>'; return; }
-  if (state.evenSplit && state.pmt.amount>0) { evenSplit(); }
 
   arr.forEach(so=>{
     const tr=document.createElement('tr');
     tr.innerHTML=`<td>${so}</td>
-      <td><input type="number" step="0.01" value="${Number(state.allocations[so]||0)}" oninput="state.allocations['${so}']=Number(this.value||0)"></td>`;
+      <td><input type="number" step="0.01" value="${Number(state.allocations[so]||0).toFixed(2)}" oninput="state.allocations['${so}']=Number(this.value||0)"></td>`;
     body.appendChild(tr);
   });
 }
 
-function toggleAllocEdit(){ state.evenSplit = !state.evenSplit; renderAlloc(); }
+function toggleAllocEdit(){ state.evenSplit = !state.evenSplit; if (state.evenSplit) { evenSplit(); } else { renderAlloc(); } }
 function addLine(){ state.lines.push({so: (Array.from(state.selectedSOs)[0]||state.primarySO||''), desc:'', qty:1, amt:0}); renderLines(); }
 function removeLine(i){ state.lines.splice(i,1); renderLines(); }
-function setLine(i,k,v){ if(k==='qty'||k==='amt'){ v=Number(v||0); } state.lines[i][k]=v; }
+function setLine(i,k,v){
+  if(k==='qty'||k==='amt'){ v=Number(v||0); }
+  state.lines[i][k]=v;
+  if (k==='qty' || k==='amt' || k==='so') {
+    renderLines();
+  }
+}
 
 function renderLines(){
   const body=$('lineBody'); body.innerHTML='';
   const opts = Array.from(state.selectedSOs).map(so=>`<option value="${so}">${so}</option>`).join('');
   state.lines.forEach((ln,i)=>{
+    const qty = Number(ln.qty||0);
+    const rate = Number(ln.amt||0);
+    const total = round2(qty * rate);
     const tr=document.createElement('tr');
     tr.innerHTML = `
       <td><select data-so-line="1" onchange="setLine(${i},'so',this.value)">${opts||`<option value="">(no SOs)</option>`}</select></td>
       <td><input type="text" value="${ln.desc||''}" oninput="setLine(${i},'desc',this.value)"></td>
-      <td><input type="number" step="1" value="${ln.qty||0}" oninput="setLine(${i},'qty',this.value)"></td>
-      <td><input type="number" step="0.01" value="${ln.amt||0}" oninput="setLine(${i},'amt',this.value)"></td>
+      <td><input type="number" step="1" value="${qty}" oninput="setLine(${i},'qty',this.value)"></td>
+      <td><input type="number" step="0.01" value="${rate.toFixed(2)}" oninput="setLine(${i},'amt',this.value)"></td>
+      <td class="num">${fmtMoney(total)}</td>
       <td><button onclick="removeLine(${i})">✕</button></td>`;
     body.appendChild(tr);
     tr.querySelector('select').value = ln.so||'';
@@ -271,7 +326,7 @@ function renderShip(){
     const tr=document.createElement('tr');
     tr.innerHTML = `
       <td><input type="text" value="${s.label||'Shipping'}" oninput="state.shipping[${i}].label=this.value"></td>
-      <td><input type="number" step="0.01" value="${Number(s.amount||0)}" oninput="state.shipping[${i}].amount=Number(this.value||0)"></td>
+      <td><input type="number" step="0.01" value="${Number(s.amount||0).toFixed(2)}" oninput="state.shipping[${i}].amount=Number(this.value||0)"></td>
       <td><button onclick="state.shipping.splice(${i},1); renderShip();">✕</button></td>`;
     body.appendChild(tr);
   });
@@ -280,11 +335,11 @@ function addShip(){ state.shipping.push({label:'Shipping', amount:0}); renderShi
 
 function evenSplit(){
   const arr=Array.from(state.selectedSOs);
-  if (!arr.length || !state.pmt.amount) return;
-  const per = Number((state.pmt.amount/arr.length).toFixed(2));
+  if (!arr.length || !(state.pmt.amount>0)) { renderAlloc(); return; }
+  const per = round2(state.pmt.amount/arr.length);
   arr.forEach(so=> state.allocations[so]=per );
   const sum = arr.reduce((s,so)=> s+(state.allocations[so]||0),0);
-  state.allocations[arr[arr.length-1]] = Number((state.allocations[arr[arr.length-1]] + (state.pmt.amount - sum)).toFixed(2));
+  state.allocations[arr[arr.length-1]] = round2(state.allocations[arr[arr.length-1]] + (state.pmt.amount - sum));
   renderAlloc();
 }
 
@@ -294,6 +349,7 @@ function refreshVisibility(){
   $('shipWrap').style.display = (state.docType==='SALES_INVOICE') ? '' : 'none';
   $('receiptWrap').style.display = (state.docType==='DEPOSIT_RECEIPT' || state.docType==='SALES_RECEIPT') ? '' : 'none';
   $('receiptAlloc').style.display = (state.docType==='DEPOSIT_RECEIPT' || state.docType==='SALES_RECEIPT') ? '' : 'none';
+  renderFeeSummary();
 }
 
 function renderKnown(soList){
@@ -308,6 +364,15 @@ function submit(){
   if (!state.selectedSOs.size) return alert('Select/type at least one SO.');
   if ((state.docType==='DEPOSIT_RECEIPT' || state.docType==='SALES_RECEIPT') && !(Number(state.pmt.amount||0)>0))
     return alert('Payment amount is required for receipts.');
+
+  if ((state.docType==='DEPOSIT_RECEIPT' || state.docType==='SALES_RECEIPT') && !state.evenSplit) {
+    const arr = Array.from(state.selectedSOs);
+    const totalAlloc = arr.reduce((sum,so)=> sum + Number(state.allocations[so]||0),0);
+    const diff = Math.abs(round2(totalAlloc) - round2(Number(state.pmt.amount||0)));
+    if (diff > 0.01) {
+      return alert(`Manual allocations must total the payment amount. Off by $${diff.toFixed(2)}.`);
+    }
+  }
 
   const payload = {
     customerId: state.customerId, companyName: state.companyName, contactName: state.contactName, address: state.address, trackerUrl: state.trackerUrl,
@@ -331,7 +396,16 @@ function submit(){
   google.script.run.withSuccessHandler(res=>{
     console.debug('[ADM_DEBUG] wh_submitPayment result ->', res);
     if (res && res.ok) {
-      alert(`Saved.\nType: ${res.docType}\nDoc#: ${res.docNumber}${res.overageCredit?`\nUnapplied Credit: $${res.overageCredit.toFixed(2)}`:''}`);
+      const lines = [
+        'Saved.',
+        `Type: ${res.docTypeLabel || res.docType}`,
+        `Doc#: ${res.docNumber}`
+      ];
+      if (res.docUrl) lines.push(`Doc: ${res.docUrl}`);
+      if (res.pdfUrl) lines.push(`PDF: ${res.pdfUrl}`);
+      if (res.folderUrl) lines.push(`Folder: ${res.folderUrl}`);
+      if (res.overageCredit) lines.push(`Unapplied Credit: $${Number(res.overageCredit).toFixed(2)}`);
+      alert(lines.join('\n'));
       google.script.host.close();
     } else {
       alert('Save failed.');
@@ -344,7 +418,8 @@ function submit(){
 
 function boot(){
   google.script.run.withSuccessHandler((resp)=>{
-    const {nowIso, ctx, debug} = resp || {};
+    const {nowIso, ctx, debug, feeRules} = resp || {};
+    window._feeRules = feeRules || {};
     if (debug && debug.enabled) {
       $('debugBox').style.display = 'block';
       $('debugBox').textContent =
