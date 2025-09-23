@@ -697,15 +697,35 @@ function buildItemRows_(lines, shipping){
 }
 
 function injectItemsTable_(body, placeholder, rows){
+  const headers = ['ITEM/SO','DESCRIPTION','QTY','TOTAL'];
   const range = body.findText(escapeForFind_(placeholder));
   if (range) {
-    const p = range.getElement().getParent().asParagraph();
-    const idx = body.getChildIndex(p);
-    p.removeFromParent();
-    const tbl = body.insertTable(idx, makeTable_(['ITEM/SO','DESCRIPTION','QTY','TOTAL'], rows));
-    tbl.setBorderWidth(0.5);
+    const paragraph = range.getElement().getParent().asParagraph();
+    const parent = paragraph.getParent();
+    const table = makeTable_(headers, rows);
+    if (parent && parent.getType && parent.getType() === DocumentApp.ElementType.BODY_SECTION) {
+      const idx = body.getChildIndex(paragraph);
+      paragraph.removeFromParent();
+      const tbl = body.insertTable(idx, table);
+      tbl.setBorderWidth(0.5);
+    } else if (parent && parent.getType && parent.getType() === DocumentApp.ElementType.TABLE_CELL) {
+      const cell = parent.asTableCell();
+      const idx = cell.getChildIndex(paragraph);
+      paragraph.removeFromParent();
+      const tbl = cell.insertTable(idx, table);
+      tbl.setBorderWidth(0.5);
+    } else if (parent && typeof parent.getChildIndex === 'function' && typeof parent.insertTable === 'function') {
+      const idx = parent.getChildIndex(paragraph);
+      paragraph.removeFromParent();
+      const tbl = parent.insertTable(idx, table);
+      tbl.setBorderWidth(0.5);
+    } else {
+      paragraph.removeFromParent();
+      const tbl = body.appendTable(table);
+      tbl.setBorderWidth(0.5);
+    }
   } else {
-    body.appendTable(makeTable_(['ITEM/SO','DESCRIPTION','QTY','TOTAL'], rows)).setBorderWidth(0.5);
+    body.appendTable(makeTable_(headers, rows)).setBorderWidth(0.5);
   }
 }
 
