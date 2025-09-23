@@ -6,11 +6,15 @@ const SP = PropertiesService.getScriptProperties();
 
 // ============================= CONFIG =============================
 const WH_LEDGER_TAB_NAME         = SP.getProperty('WH_LEDGER_TAB_NAME') || '400_payments ledger';
+const WH_MASTER_TAB_NAME         = SP.getProperty('WH_MASTER_TAB_NAME') || '00_Master Wholesale';
 const WH_DEFAULT_SHIP_PER_ORDER  = num_(SP.getProperty('WH_DEFAULT_SHIP_PER_ORDER'), 50);
 const WH_SHIP_THRESHOLD_SUBTOTAL = num_(SP.getProperty('WH_SHIP_THRESHOLD_SUBTOTAL'), 2000);
 const WH_DOC_PREFIX              = (SP.getProperty('WH_DOC_PREFIX') || 'ADM').replace(/\s+/g,'').toUpperCase();
 const WH_DOCS_ENABLED            = String(SP.getProperty('WH_DOCS_ENABLED') || 'true').toLowerCase() === 'true';
 const WH_DOCS_FOLDER_FALLBACK_ID = (SP.getProperty('WH_DOCS_FOLDER_FALLBACK_ID') || '').trim();
+
+const WH_LEDGER_SCAN_START_ROW   = num_(SP.getProperty('WH_LEDGER_SCAN_START_ROW'), 0);
+const WH_LEDGER_SCAN_WINDOW      = Math.max(200, num_(SP.getProperty('WH_LEDGER_SCAN_WINDOW'), 800));
 
 // Which tabs hold wholesale orders (SO rows)
 const WH_ORDERS_TAB_NAMES = (SP.getProperty('WH_ORDERS_TAB_NAMES_CSV') || '')
@@ -32,8 +36,28 @@ const CONTACT_ALIASES   = pickList_(SP.getProperty('WH_CONTACT_COL_ALIASES'),
 const ADDRESS_ALIASES   = pickList_(SP.getProperty('WH_ADDRESS_ONE_LINE_ALIASES'),
   ['Business Address','Business Address (one line)','Address','Company Address']);
 
+const SALES_STAGE_ALIASES = pickList_(SP.getProperty('WH_SALES_STAGE_COL_ALIASES'),
+  ['Sales Stage','Stage','Status']);
+
 const TRACKER_ALIASES   = pickList_(SP.getProperty('WH_TRACKER_URL_COL_ALIASES'),
   ['Customer Order Tracker URL','Order Tracker URL','Tracker URL']);
+
+const MASTER_PTD_ALIASES = ['Paid-to-Date','Paid To Date','Paid-To-Date','Paid to Date','Paid'];
+const MASTER_OT_ALIASES  = ['Order Total','OrderTotal','Total'];
+const MASTER_RB_ALIASES  = ['Remaining Balance','Balance','RB'];
+
+const CRM_ID_ALIASES       = ['Customer ID','CustomerID','Customer (Company) ID'];
+const CRM_COMPANY_ALIASES  = ['Business Name','Company Name'];
+const CRM_CONTACT_ALIASES  = ['Contact Name','Primary Contact'];
+const CRM_PHONE_ALIASES    = ['Contact Phone','Phone'];
+const CRM_EMAIL_ALIASES    = ['Contact Email','Email'];
+const CRM_STREET_ALIASES   = ['Street','Address 1','Addr 1'];
+const CRM_CITY_ALIASES     = ['City'];
+const CRM_STATE_ALIASES    = ['State','ST'];
+const CRM_ZIP_ALIASES      = ['ZIP','Postal Code','Zip'];
+const CRM_TERMS_ALIASES    = ['Payment Terms','Terms'];
+const CRM_TRACKER_ALIASES  = ['Customer Order Tracker URL','Tracker URL'];
+const CRM_FOLDER_ALIASES   = ['Customer Folder URL','Folder URL'];
 
 // For auto line descriptions
 const PRODUCT_DESC_ALIASES = pickList_(SP.getProperty('WH_PRODUCT_DESC_ALIASES'),
@@ -54,23 +78,141 @@ const TPL = {
 };
 
 const LEDGER_HEADERS = [
-  'PaymentID','TransactionID','InvoiceGroupID','DocNumber','DocType','DocFlavor','DocStatus',
+  'PaymentID','TransactionID','InvoiceGroupID','DocNumber','DocType','DocStatus',
   'SupersedesDoc#','SupersedeAction','AppliesToDoc#',
   'CustomerID','CompanyName','ContactName','Address',
-  'SOsCSV','PrimarySO',
+  'SO_List','SOsCSV','PrimarySO',
   'AllocationMode','AllocationsJSON',
   'LinesJSON','LinesSubtotal','ShippingJSON','ShippingTotal',
   'DOC_DATE','DueDate',
   'PaymentDateTime','AmountGross','Method','Reference','Notes',
-  'FeePercent','FeeAmount','AmountNet',
-  'PDF_URL','DOC_URL','PrimarySO_FolderID','ShortcutIDs_CSV',
+  'FeePercent','FeeFlat','FeeAmount','AmountNet',
+  'PDF_URL','DOC_URL','PrimarySO_FolderID','PrimarySO_FolderURL','ShortcutIDs_CSV',
   'CustomerOrderTrackerURL',
   'SubmittedBy','SubmittedAt'
 ];
 
+let _feeRulesCache = null;
+
+function feeMethodKey_(method){
+  return String(method||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim();
+}
+
+function loadFeeRules_(){
+  if (_feeRulesCache) return _feeRulesCache;
+  const props = SP.getProperties();
+  function pickNumber(names, fallback){
+    for (const name of names){
+      if (props[name] !== undefined) {
+        const val = num_(props[name], NaN);
+        if (isFinite(val)) return val;
+      }
+    }
+    return fallback;
+  }
+  const defaultPct  = pickNumber(['WH_FEE_PERCENT_DEFAULT','WH_FEE_DEFAULT_PERCENT','WH_FEE_PCT_DEFAULT'], 0);
+  const defaultFlat = pickNumber(['WH_FEE_FLAT_DEFAULT','WH_FEE_DEFAULT_FLAT'], 0);
+  const rules = { __default: { pct: defaultPct, flat: defaultFlat } };
+
+  const rawJson = props.WH_FEE_RULES_JSON || props.WH_FEE_METHODS_JSON || '';
+  if (rawJson) {
+    try {
+      const parsed = JSON.parse(rawJson);
+      const assign = (method, obj)=>{
+        const key = feeMethodKey_(method);
+        if (!key) return;
+        const pct = (obj && obj.pct !== undefined) ? num_(obj.pct, defaultPct) :
+                    (obj && obj.percent !== undefined) ? num_(obj.percent, defaultPct) :
+                    (obj && obj.rate !== undefined) ? num_(obj.rate, defaultPct) : defaultPct;
+        const flat = (obj && obj.flat !== undefined) ? num_(obj.flat, defaultFlat) :
+                     (obj && obj.fee !== undefined) ? num_(obj.fee, defaultFlat) : defaultFlat;
+        rules[key] = { pct, flat };
+      };
+      if (Array.isArray(parsed)) {
+        parsed.forEach(item => {
+          if (!item) return;
+          const method = item.method || item.name || item.type || (Array.isArray(item) ? item[0] : '');
+          const pct = item.pct ?? item.percent ?? item.rate ?? (Array.isArray(item) ? item[1] : undefined);
+          const flat = item.flat ?? item.fee ?? (Array.isArray(item) ? item[2] : undefined);
+          assign(method, { pct, flat });
+        });
+      } else if (parsed && typeof parsed === 'object') {
+        if (parsed.default && typeof parsed.default === 'object') {
+          const d = parsed.default;
+          rules.__default = {
+            pct: num_(d.pct ?? d.percent ?? d.rate, defaultPct),
+            flat: num_(d.flat ?? d.fee, defaultFlat)
+          };
+        }
+        if (parsed.methods && typeof parsed.methods === 'object') {
+          Object.keys(parsed.methods).forEach(method => assign(method, parsed.methods[method]));
+        }
+        Object.keys(parsed).forEach(method => {
+          if (method === 'default' || method === 'methods') return;
+          assign(method, parsed[method]);
+        });
+      }
+    } catch(err) {
+      dbg('loadFeeRules_: parse error', String(err));
+    }
+  }
+
+  Object.keys(props).forEach(key => {
+    if (key.startsWith('WH_FEE_PCT_')) {
+      const method = key.slice('WH_FEE_PCT_'.length).replace(/_/g,' ');
+      const rule = rules[feeMethodKey_(method)] || { pct: defaultPct, flat: defaultFlat };
+      rule.pct = num_(props[key], defaultPct);
+      rules[feeMethodKey_(method)] = rule;
+    }
+    if (key.startsWith('WH_FEE_FLAT_')) {
+      const method = key.slice('WH_FEE_FLAT_'.length).replace(/_/g,' ');
+      const rule = rules[feeMethodKey_(method)] || { pct: defaultPct, flat: defaultFlat };
+      rule.flat = num_(props[key], defaultFlat);
+      rules[feeMethodKey_(method)] = rule;
+    }
+  });
+
+  Object.keys(rules).forEach(key => {
+    const rule = rules[key];
+    if (!rule) return;
+    rule.pct = isFinite(rule.pct) ? rule.pct : defaultPct;
+    rule.flat = isFinite(rule.flat) ? rule.flat : defaultFlat;
+  });
+
+  _feeRulesCache = rules;
+  return _feeRulesCache;
+}
+
+function wh_calcFeeForMethod_(method, amount){
+  const amt = num_(amount,0);
+  const rules = loadFeeRules_();
+  const key = feeMethodKey_(method);
+  const rule = (key && rules[key]) || rules.__default || { pct:0, flat:0 };
+  const pct = isFinite(rule.pct) ? rule.pct : 0;
+  const flat = isFinite(rule.flat) ? rule.flat : 0;
+  const fee = amt > 0 ? round2_( (amt * (pct/100)) + flat ) : 0;
+  const net = round2_(Math.max(0, amt - fee));
+  return { pct, flat, fee, net };
+}
+
+function wh_feeRulesForUi_(){
+  const rules = loadFeeRules_();
+  const out = {
+    default: { pct: rules.__default ? rules.__default.pct || 0 : 0, flat: rules.__default ? rules.__default.flat || 0 : 0 },
+    methods: {}
+  };
+  Object.keys(rules).forEach(key => {
+    if (key === '__default') return;
+    const rule = rules[key] || {};
+    out.methods[key] = { pct: rule.pct || 0, flat: rule.flat || 0 };
+  });
+  return out;
+}
+
 // ============================= INIT / CONTEXT =============================
 function wh_init(){
   const ctx = readActiveContext_();
+  const debugEnabled = ADM_isDebug();
   const out = {
     nowIso: new Date().toISOString(),
     ctx,
@@ -79,7 +221,8 @@ function wh_init(){
       shipThresholdSubtotal: WH_SHIP_THRESHOLD_SUBTOTAL,
       docPrefix: WH_DOC_PREFIX
     },
-    enabled: ADM_isDebug(),
+    feeRules: wh_feeRulesForUi_(),
+    debug: debugEnabled ? { enabled: true, props: { defaults: { shipPerOrder: WH_DEFAULT_SHIP_PER_ORDER, shipThresholdSubtotal: WH_SHIP_THRESHOLD_SUBTOTAL } } } : { enabled: false }
   };
   dbg('wh_init ->', out);
   return out;
@@ -132,7 +275,11 @@ function readActiveContext_(){
     companyName:compCol? String(rowVals[compCol-1]||'').trim() : '',
     contactName:contact? String(rowVals[contact-1]||'').trim() : '',
     address:    address,
-    trackerUrl: trkCol ? String(rowVals[trkCol-1]||'').trim() : ''
+    trackerUrl: trkCol ? String(rowVals[trkCol-1]||'').trim() : '',
+    contactPhone:'',
+    contactEmail:'',
+    paymentTerms:'',
+    customerFolderUrl:''
   };
   dbg('readActiveContext_: initial ctx from active sheet', ctx);
 
@@ -154,10 +301,120 @@ function readActiveContext_(){
     }
   }
 
+  const crmDetails = loadCrmDetailsById_(ctx.customerId);
+  if (crmDetails) {
+    ctx = {
+      ...ctx,
+      companyName: crmDetails.businessName || ctx.companyName,
+      contactName: crmDetails.contactName || ctx.contactName,
+      address: crmDetails.addressOneLine || ctx.address,
+      trackerUrl: crmDetails.trackerUrl || ctx.trackerUrl,
+      contactPhone: crmDetails.contactPhone || ctx.contactPhone,
+      contactEmail: crmDetails.contactEmail || ctx.contactEmail,
+      paymentTerms: crmDetails.paymentTerms || ctx.paymentTerms,
+      customerFolderUrl: crmDetails.customerFolderUrl || ctx.customerFolderUrl
+    };
+  }
+
   return ctx;
 }
 
-function blankCtx_(){ return { sheetName:'', rowIndex:0, soNumber:'', customerId:'', companyName:'', contactName:'', address:'', trackerUrl:'' }; }
+function blankCtx_(){ return { sheetName:'', rowIndex:0, soNumber:'', customerId:'', companyName:'', contactName:'', address:'', trackerUrl:'', contactPhone:'', contactEmail:'', paymentTerms:'', customerFolderUrl:'' }; }
+
+function loadCrmDetailsById_(customerId){
+  const id = String(customerId||'').trim();
+  if (!id) return null;
+  if (typeof ensureCRMTab_ !== 'function') return null;
+  let sh;
+  try { sh = ensureCRMTab_(); } catch(_) { return null; }
+  if (!sh) return null;
+  const lr = sh.getLastRow(), lc = sh.getLastColumn();
+  if (lr < 2 || lc < 1) return null;
+  const hdr = sh.getRange(1,1,1,lc).getDisplayValues()[0].map(s=>String(s||'').trim());
+  const H = hIndex_(hdr);
+  const cId = pickH_(H, CRM_ID_ALIASES);
+  if (!cId) return null;
+
+  const cCompany = pickH_(H, CRM_COMPANY_ALIASES);
+  const cContact = pickH_(H, CRM_CONTACT_ALIASES);
+  const cPhone   = pickH_(H, CRM_PHONE_ALIASES);
+  const cEmail   = pickH_(H, CRM_EMAIL_ALIASES);
+  const cStreet  = pickH_(H, CRM_STREET_ALIASES);
+  const cCity    = pickH_(H, CRM_CITY_ALIASES);
+  const cState   = pickH_(H, CRM_STATE_ALIASES);
+  const cZip     = pickH_(H, CRM_ZIP_ALIASES);
+  const cTerms   = pickH_(H, CRM_TERMS_ALIASES);
+  const cTracker = pickH_(H, CRM_TRACKER_ALIASES);
+  const cFolder  = pickH_(H, CRM_FOLDER_ALIASES);
+
+  const vals = sh.getRange(2,1,lr-1,lc).getDisplayValues();
+  for (let i=0;i<vals.length;i++){
+    const row = vals[i];
+    if (String(row[cId-1]||'').trim() !== id) continue;
+    const rowIndex = i+2;
+    function get(col){ return col ? String(row[col-1]||'').trim() : ''; }
+
+    const street = get(cStreet);
+    const city   = get(cCity);
+    const state  = get(cState);
+    const zip    = get(cZip);
+
+    let locality = '';
+    if (city && state) locality = `${city}, ${state}`;
+    else if (city) locality = city;
+    else if (state) locality = state;
+    if (zip) locality = locality ? `${locality} ${zip}` : zip;
+    const addressOneLine = [street, locality].filter(Boolean).join(', ');
+
+    const trackerUrl = getLinkFromCell_(sh, rowIndex, cTracker) || get(cTracker);
+    const folderUrl  = getLinkFromCell_(sh, rowIndex, cFolder) || get(cFolder);
+
+    return {
+      row: rowIndex,
+      businessName: get(cCompany),
+      contactName: get(cContact),
+      contactPhone: get(cPhone),
+      contactEmail: get(cEmail),
+      street, city, state, zip,
+      addressOneLine,
+      paymentTerms: get(cTerms),
+      trackerUrl,
+      customerFolderUrl: folderUrl
+    };
+  }
+  return null;
+}
+
+function getLinkFromCell_(sh, row, col){
+  if (!sh || !col) return '';
+  try {
+    const cell = sh.getRange(row, col);
+    const rt = cell.getRichTextValue && cell.getRichTextValue();
+    if (rt) {
+      const direct = (rt.getLinkUrl && rt.getLinkUrl()) || '';
+      if (direct) return direct;
+      if (rt.getRuns) {
+        const runs = rt.getRuns();
+        for (let i=0;i<runs.length;i++) {
+          const u = runs[i].getLinkUrl && runs[i].getLinkUrl();
+          if (u) return u;
+        }
+      }
+    }
+    const raw = cell.getValue();
+    const rawStr = String(raw||'').trim();
+    if (rawStr) {
+      const m = rawStr.match(/https?:\/\/\S+/);
+      return m ? m[0] : rawStr;
+    }
+    const display = String(cell.getDisplayValue()||'').trim();
+    if (display) {
+      const m2 = display.match(/https?:\/\/\S+/);
+      return m2 ? m2[0] : display;
+    }
+  } catch(_) {}
+  return '';
+}
 
 /** Find a single row on the configured orders tabs by SO number and return key fields. */
 function findOrdersRowBySO_(soNumber){
@@ -220,10 +477,11 @@ function wh_listSOsForCustomer(customerId, limit){
     const hdr = sh.getRange(1,1,1,lc).getDisplayValues()[0].map(s=>String(s||'').trim());
     const H = hIndex_(hdr);
 
-    const cSO  = pickH_(H, SO_ALIASES);
-    const cCID = pickH_(H, CUSTID_ALIASES);
-    const cPD  = pickH_(H, PRODUCT_DESC_ALIASES);
-    dbg('wh_listSOsForCustomer: header map', {tab:name, cSO, cCID, cPD});
+    const cSO    = pickH_(H, SO_ALIASES);
+    const cCID   = pickH_(H, CUSTID_ALIASES);
+    const cPD    = pickH_(H, PRODUCT_DESC_ALIASES);
+    const cStage = pickH_(H, SALES_STAGE_ALIASES);
+    dbg('wh_listSOsForCustomer: header map', {tab:name, cSO, cCID, cPD, cStage});
 
     if (!cSO) continue;
     const vals = sh.getRange(2,1,lr-1,lc).getDisplayValues();
@@ -236,6 +494,11 @@ function wh_listSOsForCustomer(customerId, limit){
       if (customerId) {
         const id = cCID ? String(r[cCID-1]||'').trim() : '';
         if (id && id !== customerId) continue;
+      }
+
+      if (name === WH_MASTER_TAB_NAME && cStage) {
+        const stage = String(r[cStage-1]||'').trim().toLowerCase();
+        if (stage === 'won') continue;
       }
 
       out.push({
@@ -304,15 +567,35 @@ function wh_submitPayment(payload){
     else if (dt==='CREDIT')          { docKind='CREDIT';  docFlavor='SALES';   }
     else throw new Error('Unsupported Document Type.');
 
+    const docTypeLabelMap = {
+      'DEPOSIT_INVOICE': 'Deposit Invoice',
+      'DEPOSIT_RECEIPT': 'Deposit Receipt',
+      'SALES_INVOICE': 'Sales Invoice',
+      'SALES_RECEIPT': 'Sales Receipt',
+      'CREDIT': 'Credit'
+    };
+    const docTypeLabel = docTypeLabelMap[dt] || dt;
+
     const customerId  = mustStr_(payload.customerId, 'customerId');
     const companyName = (payload.companyName||'').trim();
     const contactName = (payload.contactName||'').trim();
     const address     = (payload.address||'').trim();
 
     const primarySO = mustStr_(payload.primarySO, 'primarySO');
-    const soList = (payload.soList||[]).map(s=>String(s||'').trim()).filter(Boolean);
+    const soCandidates = Array.isArray(payload.soList) ? payload.soList : [];
+    const seenSOs = new Set();
+    const soList = [];
+    function pushSo(raw){
+      const so = String(raw||'').trim();
+      if (!so) return;
+      const key = normSoKey_(so);
+      if (!key || seenSOs.has(key)) return;
+      seenSOs.add(key);
+      soList.push(so);
+    }
+    pushSo(primarySO);
+    soCandidates.forEach(pushSo);
     if (!soList.length) throw new Error('Select/type at least one SO.');
-    if (!soList.includes(primarySO)) soList.unshift(primarySO);
 
     const docDate = payload.docDateISO ? new Date(payload.docDateISO) : new Date();
     let dueDate = '';
@@ -347,7 +630,10 @@ function wh_submitPayment(payload){
 
     // Receipt allocation
     const pmt = (payload.pmt||{});
-    pmt.amount = num_(pmt.amount, 0);
+    pmt.amount = round2_(num_(pmt.amount, 0));
+    pmt.method = String(pmt.method||'').trim();
+    pmt.reference = String(pmt.reference||'').trim();
+    pmt.notes = String(pmt.notes||'').trim();
     let allocationMode = '', allocMap = {};
     if (docKind==='RECEIPT') {
       if (!(pmt.amount>0)) throw new Error('Payment amount is required for receipts.');
@@ -359,8 +645,19 @@ function wh_submitPayment(payload){
         const sumEven = Object.values(allocMap).reduce((a,b)=>a+b,0);
         allocMap[soList[soList.length-1]] = round2_(allocMap[soList[soList.length-1]] + (pmt.amount - sumEven));
       } else {
-        (payload.allocations||[]).forEach(a => { const so=String(a.so||'').trim(); if (so) allocMap[so]=num_(a.amount,0); });
+        (payload.allocations||[]).forEach(a => {
+          const so = String(a.so||'').trim();
+          if (!so) return;
+          if (!seenSOs.has(normSoKey_(so))) return;
+          allocMap[so] = round2_(num_(a.amount,0));
+        });
+        const manualSum = Object.values(allocMap).reduce((sum,val)=>sum + num_(val,0),0);
+        const diff = Math.abs(round2_(manualSum) - pmt.amount);
+        if (diff > 0.01) {
+          throw new Error('Manual allocations must total the payment amount. Off by $' + diff.toFixed(2));
+        }
       }
+      soList.forEach(so => { if (!(so in allocMap)) allocMap[so] = 0; });
     }
     dbg('wh_submitPayment: allocations', {allocationMode, allocMap, pmtAmount: pmt.amount});
 
@@ -379,9 +676,17 @@ function wh_submitPayment(payload){
     dbg('wh_submitPayment: template chosen', {docKind, docFlavor, tplId});
 
     // Build document
-    let docUrl='', pdfUrl='', primaryFolderId='', shortcutIds=[];
+    let docUrl='', pdfUrl='', primaryFolderId='', primaryFolderUrl='', shortcutIds=[];
     if (WH_DOCS_ENABLED) {
       primaryFolderId = wh_findSoFolderId(primarySO) || WH_DOCS_FOLDER_FALLBACK_ID || '';
+      if (primaryFolderId) {
+        try {
+          primaryFolderUrl = DriveApp.getFolderById(primaryFolderId).getUrl();
+        } catch(e) {
+          dbg('wh_submitPayment: primary folder lookup failed', { primarySO, error: String(e) });
+          primaryFolderUrl = '';
+        }
+      }
       const model = {
         docKind, docFlavor, customerId, companyName, contactName, address,
         transactionId, invoiceGroupId, docNumber,
@@ -419,8 +724,7 @@ function wh_submitPayment(payload){
     setIf_(row,H,'TransactionID', transactionId);
     setIf_(row,H,'InvoiceGroupID', invoiceGroupId);
     setIf_(row,H,'DocNumber', docNumber);
-    setIf_(row,H,'DocType', docKind);
-    setIf_(row,H,'DocFlavor', docFlavor);
+    setIf_(row,H,'DocType', dt);
     setIf_(row,H,'DocStatus', 'ISSUED');
 
     const supersedesDocNumber = String(payload.supersedesDocNumber||'').trim();
@@ -436,6 +740,7 @@ function wh_submitPayment(payload){
     setIf_(row,H,'ContactName', contactName);
     setIf_(row,H,'Address', address);
 
+    setIf_(row,H,'SO_List', JSON.stringify(soList));
     setIf_(row,H,'SOsCSV', soList.join(', '));
     setIf_(row,H,'PrimarySO', primarySO);
     if (docKind==='RECEIPT') setIf_(row,H,'AllocationMode', allocationMode);
@@ -449,7 +754,11 @@ function wh_submitPayment(payload){
     setIf_(row,H,'DOC_DATE', docDate);
     if (dueDate) setIf_(row,H,'DueDate', dueDate);
 
-    const feePct = 0, feeAmt = round2_((pmt.amount||0)*feePct), amtNet = round2_((pmt.amount||0)-feeAmt);
+    const feeInfo = wh_calcFeeForMethod_(pmt.method, pmt.amount||0);
+    const feePct = feeInfo.pct || 0;
+    const feeFlat = feeInfo.flat || 0;
+    const feeAmt = feeInfo.fee || 0;
+    const amtNet = feeInfo.net || round2_(pmt.amount||0);
     setIf_(row,H,'PaymentDateTime', (docKind==='RECEIPT') ? (pmt.dateTimeISO ? new Date(pmt.dateTimeISO) : new Date()) : '');
     setIf_(row,H,'AmountGross', pmt.amount||'');
     setIf_(row,H,'Method', pmt.method||'');
@@ -457,12 +766,14 @@ function wh_submitPayment(payload){
     setIf_(row,H,'Notes', (pmt.notes||payload.notes||''));
 
     setIf_(row,H,'FeePercent', feePct);
+    setIf_(row,H,'FeeFlat', feeFlat);
     setIf_(row,H,'FeeAmount', feeAmt);
     setIf_(row,H,'AmountNet', amtNet);
 
     setIf_(row,H,'PDF_URL', pdfUrl);
     setIf_(row,H,'DOC_URL', docUrl);
     setIf_(row,H,'PrimarySO_FolderID', primaryFolderId);
+    setIf_(row,H,'PrimarySO_FolderURL', primaryFolderUrl);
     setIf_(row,H,'ShortcutIDs_CSV', (shortcutIds||[]).join(','));
     setIf_(row,H,'CustomerOrderTrackerURL', (payload.trackerUrl||''));
 
@@ -473,8 +784,8 @@ function wh_submitPayment(payload){
 
     try { if (payload.trackerUrl) mirrorTrackerUrl_(customerId, payload.trackerUrl); } catch(e){ dbg('mirrorTrackerUrl error', String(e)); }
 
-    if (docKind==='RECEIPT' && Object.keys(allocMap).length) {
-      wh_applyReceiptToOrders_(allocMap);
+    if (docKind==='RECEIPT') {
+      wh_applyReceiptToOrders_(allocMap, soList);
     }
 
     let overage = 0;
@@ -486,7 +797,20 @@ function wh_submitPayment(payload){
       }
     }
 
-    return { ok:true, docType: dt, transactionId, invoiceGroupId, docNumber, pdfUrl, docUrl, overageCredit: overage };
+    return {
+      ok: true,
+      docType: dt,
+      docTypeLabel,
+      transactionId,
+      invoiceGroupId,
+      docNumber,
+      pdfUrl,
+      docUrl,
+      folderUrl: primaryFolderUrl,
+      primaryFolderId,
+      shortcutIds,
+      overageCredit: overage
+    };
   } finally { try{ lock.releaseLock(); }catch(_){} }
 }
 
@@ -588,41 +912,237 @@ function writeCreditRow_(customerId, companyName, amount, method, transactionId,
   setIf_(row,H,'Method', method||'');
   setIf_(row,H,'TransactionID', transactionId||'');
   setIf_(row,H,'InvoiceGroupID', invoiceGroupId||'');
+  setIf_(row,H,'FeePercent', 0);
+  setIf_(row,H,'FeeFlat', 0);
+  setIf_(row,H,'FeeAmount', 0);
+  setIf_(row,H,'AmountNet', amount);
   setIf_(row,H,'SubmittedAt', new Date());
   sh.appendRow(row);
 }
 
-// ============================= ORDERS WRITEBACK =============================
-function wh_applyReceiptToOrders_(allocMap){
-  const ss = SpreadsheetApp.getActive();
-  const tabNames = WH_ORDERS_TAB_NAMES.length ? WH_ORDERS_TAB_NAMES : ss.getSheets().map(s=>s.getName());
-
-  const PTD_ALIASES  = ['Paid-to-Date','Paid To Date','Paid-To-Date','Paid to Date','Paid'];
-  const OT_ALIASES   = ['Order Total','OrderTotal','Total'];
-  const RB_ALIASES   = ['Remaining Balance','Balance','RB'];
-
-  for (const tab of tabNames){
-    const sh = ss.getSheetByName(tab); if (!sh) continue;
-    const lr = sh.getLastRow(), lc=sh.getLastColumn(); if (lr<2) continue;
-    const hdr = sh.getRange(1,1,1,lc).getDisplayValues()[0].map(s=>String(s||'').trim());
-    const H = hIndex_(hdr);
-    const cSO  = pickH_(H, SO_ALIASES); if (!cSO) continue;
-    const cPTD = pickH_(H, PTD_ALIASES);
-    const cOT  = pickH_(H, OT_ALIASES);
-    const cRB  = pickH_(H, RB_ALIASES);
-
-    const vals = sh.getRange(2,1,lr-1,lc).getValues();
-    let touched = false;
-    for (let i=0;i<vals.length;i++){
-      const r = vals[i];
-      const so = String(r[cSO-1]||'').trim(); if (!so || !(so in allocMap)) continue;
-      const add = num_(allocMap[so],0); if (add<=0) continue;
-      if (cPTD){ const cur = num_(r[cPTD-1],0); r[cPTD-1] = cur + add; touched = true; }
-      if (cRB && cOT && cPTD){ const ot=num_(r[cOT-1],0); const ptd=num_(r[cPTD-1],0); r[cRB-1] = Math.max(0, round2_(ot-ptd)); touched=true; }
-      vals[i] = r;
-    }
-    if (touched) sh.getRange(2,1,lr-1,lc).setValues(vals);
+// ============================= RECEIPT SUMS & MIRROR =============================
+function ledgerScanValues_(sh, lc){
+  const last = sh.getLastRow();
+  if (last < 2) return [];
+  let start = 2;
+  if (WH_LEDGER_SCAN_START_ROW && WH_LEDGER_SCAN_START_ROW >= 2 && WH_LEDGER_SCAN_START_ROW <= last) {
+    start = WH_LEDGER_SCAN_START_ROW;
+  } else if (WH_LEDGER_SCAN_WINDOW && WH_LEDGER_SCAN_WINDOW > 0) {
+    start = Math.max(2, last - WH_LEDGER_SCAN_WINDOW + 1);
   }
+  return sh.getRange(start, 1, last - start + 1, lc).getValues();
+}
+
+function parseAllocationsJSON_(raw){
+  if (!raw && raw !== 0) return {};
+  let parsed = raw;
+  if (typeof raw === 'string') {
+    const txt = raw.trim();
+    if (!txt) return {};
+    try { parsed = JSON.parse(txt); }
+    catch(_) { return {}; }
+  }
+  const out = {};
+  if (Array.isArray(parsed)) {
+    parsed.forEach(item => {
+      if (!item) return;
+      if (Array.isArray(item)) {
+        const so = item[0];
+        const amount = item[1];
+        if (so !== undefined) out[String(so)] = num_(amount,0);
+      } else if (typeof item === 'object') {
+        const so = item.so || item.SO || item.id || item.name;
+        const amount = item.amount ?? item.value ?? item.net ?? item.amt;
+        if (so !== undefined) out[String(so)] = num_(amount,0);
+      }
+    });
+  } else if (parsed && typeof parsed === 'object') {
+    Object.keys(parsed).forEach(key => {
+      const value = parsed[key];
+      if (value === null || value === undefined) return;
+      if (typeof value === 'object' && !Array.isArray(value)) {
+        const so = value.so || value.SO || key;
+        const amount = value.amount ?? value.value ?? value.net ?? value.amt;
+        out[String(so)] = num_(amount,0);
+      } else {
+        out[String(key)] = num_(value,0);
+      }
+    });
+  }
+  return out;
+}
+
+function extractSoEntries_(row, H){
+  const entries = [];
+  const seen = new Set();
+  const pushVal = (val)=>{
+    const so = String(val||'').trim();
+    if (!so) return;
+    const key = normSoKey_(so);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    entries.push({ key, value: so });
+  };
+
+  if (H['SO_List']) {
+    const raw = row[H['SO_List']-1];
+    if (Array.isArray(raw)) {
+      raw.forEach(pushVal);
+    } else if (typeof raw === 'string') {
+      const txt = raw.trim();
+      if (txt) {
+        if (txt.startsWith('[')) {
+          try {
+            const arr = JSON.parse(txt);
+            if (Array.isArray(arr)) arr.forEach(pushVal);
+          } catch(_) {}
+        } else {
+          txt.split(/[,\n]/).forEach(pushVal);
+        }
+      }
+    }
+  }
+
+  if (!entries.length && H['SOsCSV']) {
+    const csv = String(row[H['SOsCSV']-1]||'');
+    csv.split(',').forEach(pushVal);
+  }
+
+  if (!entries.length && H['PrimarySO']) {
+    pushVal(row[H['PrimarySO']-1]);
+  }
+
+  return entries;
+}
+
+function computeAllocationsForRow_(row, H, targetKeys){
+  const allowed = targetKeys ? new Set(Array.from(targetKeys).map(k=>normSoKey_(k))) : null;
+  const entries = extractSoEntries_(row, H);
+  if (!entries.length) return {};
+  const relevant = allowed ? entries.filter(e=>allowed.has(e.key)) : entries;
+  if (!relevant.length) return {};
+
+  const rawAlloc = H['AllocationsJSON'] ? row[H['AllocationsJSON']-1] : '';
+  const allocParsed = parseAllocationsJSON_(rawAlloc);
+  const out = {};
+  Object.keys(allocParsed).forEach(so => {
+    const key = normSoKey_(so);
+    if (!key) return;
+    if (allowed && !allowed.has(key)) return;
+    out[key] = round2_(num_(allocParsed[so],0));
+  });
+
+  if (!Object.keys(out).length) {
+    const amountNet = H['AmountNet'] ? num_(row[H['AmountNet']-1],0) : 0;
+    const amountGross = num_(row[H['AmountGross']-1],0);
+    const base = amountNet || amountGross;
+    if (!(base>0)) return {};
+    const shareTargets = relevant;
+    let distributed = 0;
+    const per = shareTargets.length ? round2_(base / shareTargets.length) : 0;
+    shareTargets.forEach((entry, idx)=>{
+      let val = per;
+      if (idx === shareTargets.length-1) {
+        val = round2_(base - distributed);
+      }
+      distributed = round2_(distributed + val);
+      out[entry.key] = round2_(val);
+    });
+  }
+
+  return out;
+}
+
+function wh_collectReceiptSums_(targetKeys){
+  const sh = ensureLedger_();
+  const lc = sh.getLastColumn();
+  if (lc < 1) return {};
+  const rows = ledgerScanValues_(sh, lc);
+  if (!rows.length) return {};
+  const hdr = sh.getRange(1,1,1,lc).getDisplayValues()[0].map(s=>String(s||'').trim());
+  const H = headerMap_(hdr);
+  const allowed = targetKeys ? new Set(Array.from(targetKeys).map(k=>normSoKey_(k))) : null;
+  const sums = {};
+  rows.forEach(row => {
+    const docType = String(row[H['DocType']-1]||'').toUpperCase();
+    if (!docType || docType.indexOf('RECEIPT') === -1) return;
+    const status = H['DocStatus'] ? String(row[H['DocStatus']-1]||'').toUpperCase() : 'ISSUED';
+    if (status === 'VOID' || status === 'REPLACED') return;
+    const allocs = computeAllocationsForRow_(row, H, allowed);
+    Object.keys(allocs).forEach(key => {
+      if (allowed && !allowed.has(key)) return;
+      sums[key] = round2_((sums[key]||0) + num_(allocs[key],0));
+    });
+  });
+  return sums;
+}
+
+function wh_sumReceiptsForSO_(soNumber){
+  const key = normSoKey_(soNumber);
+  if (!key) return 0;
+  const sums = wh_collectReceiptSums_(new Set([key]));
+  return round2_(sums[key] || 0);
+}
+
+function wh_setPaidToDateOnMaster_(soList){
+  const arr = Array.isArray(soList) ? soList : [soList];
+  const keys = arr.map(normSoKey_).filter(Boolean);
+  if (!keys.length) return;
+  const keySet = new Set(keys);
+  const sums = wh_collectReceiptSums_(keySet);
+
+  const ss = SpreadsheetApp.getActive();
+  const sh = ss.getSheetByName(WH_MASTER_TAB_NAME);
+  if (!sh) { dbg('wh_setPaidToDateOnMaster_: master sheet missing', WH_MASTER_TAB_NAME); return; }
+  const lr = sh.getLastRow(), lc = sh.getLastColumn();
+  if (lr < 2 || lc < 1) return;
+  const hdr = sh.getRange(1,1,1,lc).getDisplayValues()[0].map(s=>String(s||'').trim());
+  const H = hIndex_(hdr);
+  const cSO = pickH_(H, SO_ALIASES);
+  if (!cSO) return;
+  const cPTD = pickH_(H, MASTER_PTD_ALIASES);
+  const cOT  = pickH_(H, MASTER_OT_ALIASES);
+  const cRB  = pickH_(H, MASTER_RB_ALIASES);
+  const values = sh.getRange(2,1,lr-1,lc).getValues();
+  const updates = {};
+
+  for (let i=0;i<values.length;i++){
+    const row = values[i];
+    const so = String(row[cSO-1]||'').trim();
+    const key = normSoKey_(so);
+    if (!key || !keySet.has(key)) continue;
+    const newPaid = round2_(sums[key] || 0);
+    const info = updates[i+2] || {};
+    if (cPTD) {
+      const cur = num_(row[cPTD-1],0);
+      if (Math.abs(cur - newPaid) > 0.009) {
+        info.ptd = newPaid;
+      }
+    }
+    if (cRB && cOT) {
+      const ot = num_(row[cOT-1],0);
+      const newBal = Math.max(0, round2_(ot - newPaid));
+      const curBal = num_(row[cRB-1],0);
+      if (Math.abs(curBal - newBal) > 0.009) {
+        info.rb = newBal;
+      }
+    }
+    if (Object.keys(info).length) updates[i+2] = info;
+  }
+
+  Object.keys(updates).forEach(rowIndex => {
+    const idx = Number(rowIndex);
+    const info = updates[rowIndex];
+    if (cPTD && info.ptd !== undefined) sh.getRange(idx, cPTD).setValue(info.ptd);
+    if (cRB && info.rb !== undefined) sh.getRange(idx, cRB).setValue(info.rb);
+  });
+}
+
+// ============================= ORDERS WRITEBACK =============================
+function wh_applyReceiptToOrders_(allocMap, soList){
+  const sos = Array.isArray(soList) && soList.length ? soList : Object.keys(allocMap||{});
+  if (!sos.length) return;
+  wh_setPaidToDateOnMaster_(sos);
 }
 
 // ============================= DOC BUILDER =============================
@@ -718,42 +1238,44 @@ function injectPaymentsList_(body, placeholder, customerId, soList){
 }
 
 function getPriorPayments_(customerId, soList){
-  const sh = ensureLedger_(); const lr=sh.getLastRow(), lc=sh.getLastColumn(); if (lr<2) return [];
-  const H = headerMap_(sh.getRange(1,1,1,lc).getDisplayValues()[0]);
-  const vals = sh.getRange(2,1,lr-1,lc).getValues();
-  const set = new Set(soList.map(s=>String(s).trim()));
+  const sh = ensureLedger_();
+  const lc = sh.getLastColumn();
+  if (lc < 1) return [];
+  const rows = ledgerScanValues_(sh, lc);
+  if (!rows.length) return [];
+  const hdr = sh.getRange(1,1,1,lc).getDisplayValues()[0].map(s=>String(s||'').trim());
+  const H = headerMap_(hdr);
+  const keys = new Set((soList||[]).map(normSoKey_).filter(Boolean));
+  if (!keys.size) return [];
   const out = [];
-  for (let i=0;i<vals.length;i++){
-    const r = vals[i];
-    if (String(r[H['CustomerID']-1]||'').trim() !== customerId) continue;
-    if (String(r[H['DocType']-1]||'').toUpperCase() !== 'RECEIPT') continue;
-    const csv = String(r[H['SOsCSV']-1]||'');
-    const any = csv.split(',').map(s=>s.trim()).some(s => set.has(s));
-    if (!any) continue;
-    out.push({ date: r[H['PaymentDateTime']-1] || r[H['DOC_DATE']-1] || new Date(),
-               amount: num_(r[H['AmountGross']-1],0),
-               method: String(r[H['Method']-1]||'') });
-  }
+  rows.forEach(row => {
+    const docType = String(row[H['DocType']-1]||'').toUpperCase();
+    if (!docType || docType.indexOf('RECEIPT') === -1) return;
+    if (customerId) {
+      const rowCust = String(row[H['CustomerID']-1]||'').trim();
+      if (rowCust && rowCust !== customerId) return;
+    }
+    const status = H['DocStatus'] ? String(row[H['DocStatus']-1]||'').toUpperCase() : 'ISSUED';
+    if (status === 'VOID' || status === 'REPLACED') return;
+    const allocs = computeAllocationsForRow_(row, H, keys);
+    let amount = 0;
+    Object.keys(allocs).forEach(key => { if (keys.has(key)) amount += num_(allocs[key],0); });
+    amount = round2_(amount);
+    if (!(amount>0)) return;
+    const dateVal = row[H['PaymentDateTime']-1] || row[H['DOC_DATE']-1] || new Date();
+    out.push({ date: dateVal, amount, method: String(row[H['Method']-1]||'') });
+  });
   out.sort((a,b)=> (new Date(a.date)) - (new Date(b.date)));
   return out;
 }
 
 function computePaidToDate_(customerId, soList){
-  const sh = ensureLedger_(); const lr=sh.getLastRow(), lc=sh.getLastColumn(); if (lr<2) return 0;
-  const H = headerMap_(sh.getRange(1,1,1,lc).getDisplayValues()[0]);
-  const vals = sh.getRange(2,1,lr-1,lc).getValues();
-  const set = new Set(soList.map(s=>String(s).trim()));
-  let sum=0;
-  for (let i=0;i<vals.length;i++){
-    const r = vals[i];
-    if (String(r[H['CustomerID']-1]||'').trim() !== customerId) continue;
-    if (String(r[H['DocType']-1]||'').toUpperCase() !== 'RECEIPT') continue;
-    const csv = String(r[H['SOsCSV']-1]||'');
-    const any = csv.split(',').map(s=>s.trim()).some(s => set.has(s));
-    if (!any) continue;
-    sum += num_(r[H['AmountGross']-1],0);
-  }
-  return round2_(sum);
+  const keys = (soList||[]).map(normSoKey_).filter(Boolean);
+  if (!keys.length) return 0;
+  const sums = wh_collectReceiptSums_(new Set(keys));
+  let total = 0;
+  keys.forEach(key => { total += num_(sums[key],0); });
+  return round2_(total);
 }
 
 function computeBalance_(customerId, soList, currentOrderTotal){
@@ -805,6 +1327,7 @@ function pickH_(H, names){ for (const n of (names||[])) if (H[n]) return H[n]; r
 function headerMap_(hdrRow){ const m={}; hdrRow.forEach((h,i)=>{ m[String(h||'').trim()] = i+1; }); return m; }
 function setIf_(row,H,key,val){ if (H[key]) row[H[key]-1] = val; }
 function soEq_(a,b){ const sa=String(a||'').trim(), sb=String(b||'').trim(); if (sa===sb) return true; const na=Number(sa.replace(/[^\d.]/g,'')), nb=Number(sb.replace(/[^\d.]/g,'')); return (isFinite(na)&&isFinite(nb)) ? (Math.abs(na-nb)<1e-9) : false; }
+function normSoKey_(so){ return String(so||'').trim().toUpperCase().replace(/\s+/g,''); }
 function num_(v, d){ const n=parseFloat(String(v||'').replace(/[^\d.\-]/g,'')); return isFinite(n)?n:(d||0); }
 function round2_(n){ return Math.round(num_(n,0)*100)/100; }
 function money_(n){ n=num_(n,0); const s=n.toFixed(2); return '$'+s.replace(/\B(?=(\d{3})+(?!\d))/g,','); }
