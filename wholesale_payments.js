@@ -27,10 +27,14 @@ const COMPANY_ALIASES   = pickList_(SP.getProperty('WH_COMPANY_COL_ALIASES'),
   ['Company Name','Business Name','Customer','Customer Name']);
 
 const CONTACT_ALIASES   = pickList_(SP.getProperty('WH_CONTACT_COL_ALIASES'),
-  ['Contact Name','Contact']);
+  ['Contact Name','Contact','Primary Contact','Main Contact','Contact Person','Attn','Attention']);
+const CONTACT_FIRST_ALIASES = pickList_(SP.getProperty('WH_CONTACT_FIRST_COL_ALIASES'),
+  ['Contact First Name','Contact First','Primary Contact First Name','Primary Contact First','Contact FirstName']);
+const CONTACT_LAST_ALIASES  = pickList_(SP.getProperty('WH_CONTACT_LAST_COL_ALIASES'),
+  ['Contact Last Name','Contact Last','Primary Contact Last Name','Primary Contact Last','Contact LastName']);
 
 const ADDRESS_ALIASES   = pickList_(SP.getProperty('WH_ADDRESS_ONE_LINE_ALIASES'),
-  ['Business Address','Business Address (one line)','Address','Company Address']);
+  ['Business Address','Business Address (one line)','Business Address (One Line)','Address','Address (one line)','Company Address']);
 
 const TRACKER_ALIASES   = pickList_(SP.getProperty('WH_TRACKER_URL_COL_ALIASES'),
   ['Customer Order Tracker URL','Order Tracker URL','Tracker URL']);
@@ -134,6 +138,15 @@ function readActiveContext_(){
     address:    address,
     trackerUrl: trkCol ? String(rowVals[trkCol-1]||'').trim() : ''
   };
+
+  if (!ctx.contactName) {
+    const cFirst = pickH_(H, CONTACT_FIRST_ALIASES);
+    const cLast  = pickH_(H, CONTACT_LAST_ALIASES);
+    const first = cFirst ? String(rowVals[cFirst-1]||'').trim() : '';
+    const last  = cLast  ? String(rowVals[cLast-1]||'').trim() : '';
+    const combined = [first, last].filter(Boolean).join(' ').trim();
+    if (combined) ctx.contactName = combined;
+  }
   dbg('readActiveContext_: initial ctx from active sheet', ctx);
 
   // Fallback via orders tabs if something is still blank but we have a primary SO
@@ -179,6 +192,12 @@ function findOrdersRowBySO_(soNumber){
     const cADR = pickH_(H, ADDRESS_ALIASES);
     const cTRK = pickH_(H, TRACKER_ALIASES);
     const cPD  = pickH_(H, PRODUCT_DESC_ALIASES);
+    const cFirst = pickH_(H, CONTACT_FIRST_ALIASES);
+    const cLast  = pickH_(H, CONTACT_LAST_ALIASES);
+    const cStreet = pickH_(H, STREET_ALIASES);
+    const cCity   = pickH_(H, CITY_ALIASES);
+    const cState  = pickH_(H, STATE_ALIASES);
+    const cZip    = pickH_(H, ZIP_ALIASES);
 
     if (!cSO) continue;
     const vals = sh.getRange(2,1,lr-1,lc).getDisplayValues();
@@ -196,6 +215,18 @@ function findOrdersRowBySO_(soNumber){
           trackerUrl:  cTRK ? String(r[cTRK-1]||'').trim() : '',
           productDesc: cPD  ? String(r[cPD-1]||'').trim() : ''
         };
+        if (!out.contactName && (cFirst || cLast)) {
+          const first = cFirst ? String(r[cFirst-1]||'').trim() : '';
+          const last  = cLast  ? String(r[cLast-1]||'').trim() : '';
+          out.contactName = [first, last].filter(Boolean).join(' ').trim();
+        }
+        if (!out.address && (cStreet || cCity || cState || cZip)) {
+          const street = cStreet?String(r[cStreet-1]||'').trim():'';
+          const city   = cCity?String(r[cCity-1]||'').trim():'';
+          const state  = cState?String(r[cState-1]||'').trim():'';
+          const zip    = cZip?String(r[cZip-1]||'').trim():'';
+          out.address = [street, [city, state].filter(Boolean).join(', '), zip].filter(Boolean).join(', ');
+        }
         dbg('findOrdersRowBySO_: match', out);
         return out;
       }
@@ -235,7 +266,7 @@ function wh_listSOsForCustomer(customerId, limit){
 
       if (customerId) {
         const id = cCID ? String(r[cCID-1]||'').trim() : '';
-        if (id && id !== customerId) continue;
+        if (!id || id !== customerId) continue;
       }
 
       out.push({
@@ -861,8 +892,18 @@ function replaceRegex_(body, regex, repl){
 }
 function makeTable_(headers, rows){
   const temp = DocumentApp.create('tmp-tbl');
-  const tb = temp.getBody().appendTable([headers]);
-  rows.forEach(r=>tb.appendTableRow([String(r[0]||''), String(r[1]||''), String(r[2]||''), String(r[3]||'')]));
-  const copy = tb.copy(); const id=temp.getId(); temp.saveAndClose(); DriveApp.getFileById(id).setTrashed(true);
+  const body = temp.getBody();
+  const tb = body.appendTable([headers.map(h=>String(h||''))]);
+  const data = Array.isArray(rows) ? rows : [];
+  data.forEach(r=>{
+    const tr = tb.appendTableRow();
+    for (let i=0; i<headers.length; i++) {
+      tr.appendTableCell(String((r && r[i]) || ''));
+    }
+  });
+  const copy = tb.copy();
+  const id=temp.getId();
+  temp.saveAndClose();
+  DriveApp.getFileById(id).setTrashed(true);
   return copy;
 }
