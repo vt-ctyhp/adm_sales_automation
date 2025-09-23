@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <style>
+    body { font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Arial; padding: 12px 16px; color:#111; }
+    h2 { margin: 8px 0 12px; }
+    .row { display:flex; gap:12px; margin:6px 0; }
+    .row > label { flex:1; display:flex; flex-direction:column; }
+    input[type=text], input[type=tel], input[type=email], textarea {
+      padding:8px; border:1px solid #d0d0d0; border-radius:6px;
+    }
+    textarea { min-height: 90px; }
+    .box { border:1px solid #e5e5e5; border-radius:8px; padding:12px; margin:8px 0; background:#fafafa; }
+    .muted { color:#666; font-size:12px; }
+    .actions { display:flex; justify-content:space-between; margin-top:12px; }
+    .btn { background:#1a73e8; color:#fff; border:none; border-radius:6px; padding:8px 12px; cursor:pointer; }
+    .btn.secondary { background:#e8eaed; color:#111; }
+    .btn:disabled { background:#c7c9cc; color:#555; cursor:not-allowed; }
+    .chk-group { display:flex; gap:16px; align-items:center; flex-wrap:wrap; margin-top:4px; }
+    .chk-group label { display:flex; align-items:center; gap:6px; margin:0; line-height:1.2; }
+    .chk-group input[type=checkbox]{ margin:0; transform: translateY(0); }
+    #hip-group { row-gap:8px; }
+    .err { color:#b91c1c; margin-top:6px; font-size:12px; display:none; }
+    .hidden { display:none; }
+  </style>
+</head>
+<body>
+  <h2>Add New Customer</h2>
+
+  <div id="formPanel">
+    <div class="box">
+      <div class="row">
+        <label>Business Name <span class="muted">(required)</span>
+          <input id="businessName" type="text" placeholder="e.g., Acme Jewelers" required>
+        </label>
+        <label>Contact Name <span class="muted">(required)</span>
+          <input id="contactName" type="text" placeholder="e.g., Jane Nguyen" required>
+        </label>
+      </div>
+
+      <div class="row">
+        <label>Contact Phone
+          <input id="phone" type="tel" placeholder="e.g., (408) 555-1234">
+        </label>
+        <label>Contact Email
+          <input id="email" type="email" placeholder="e.g., hello@acme.com">
+        </label>
+      </div>
+
+      <div class="row" style="flex-direction:column;">
+        <label>Preferred Contact Method</label>
+        <div class="chk-group">
+          <label><input type="checkbox" name="pcm" value="Text"> Text</label>
+          <label><input type="checkbox" name="pcm" value="Call"> Call</label>
+          <label><input type="checkbox" name="pcm" value="Email"> Email</label>
+        </div>
+      </div>
+
+      <div class="row">
+        <label>Street <input id="street" type="text" placeholder="123 Main St"></label>
+      </div>
+      <div class="row">
+        <label>City <input id="city" type="text" placeholder="San Jose"></label>
+        <label>State <input id="stateCode" type="text" maxlength="2" placeholder="CA" style="text-transform:uppercase;"></label>
+        <label>ZIP <input id="zip" type="text" maxlength="10" placeholder="95113"></label>
+      </div>
+
+      <div class="row" style="flex-direction:column;">
+        <label>High Interest Products</label>
+        <div class="chk-group" id="hip-group">
+          <label><input type="checkbox" name="hip" value="Engagement Rings"> Engagement Rings</label>
+          <label><input type="checkbox" name="hip" value="Gold Chains"> Gold Chains</label>
+          <label><input type="checkbox" name="hip" value="Pendants"> Pendants</label>
+          <label><input type="checkbox" name="hip" value="Earrings"> Earrings</label>
+          <label><input type="checkbox" name="hip" value="Necklaces"> Necklaces</label>
+          <label><input type="checkbox" name="hip" value="General"> General</label>
+          <label><input type="checkbox" name="hip" value="Custom"> Custom</label>
+          <label><input type="checkbox" name="hip" value="Jewelry"> Jewelry</label>
+          <label><input type="checkbox" id="hip_other" name="hip" value="Other"> Other</label>
+          <input id="hip_other_text" type="text" placeholder="Describe…" style="min-width:220px;" disabled>
+        </div>
+      </div>
+
+      <div class="row">
+        <label>Additional Notes
+          <textarea id="notes" placeholder="Any notes about this customer…"></textarea>
+        </label>
+      </div>
+
+      <div id="err" class="err">Please provide Business Name, Contact Name, and at least one of Phone or Email.</div>
+    </div>
+
+    <div class="actions">
+      <span class="muted">This will create a Customer folder and append a row to <b>01_CRM</b>.</span>
+      <div>
+        <button class="btn secondary" onclick="google.script.host.close()">Cancel</button>
+        <button class="btn" id="saveBtn" onclick="submitNewCustomer()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="successPanel" class="box hidden">
+    <h3 style="margin:0 0 8px;">Customer Saved</h3>
+    <div id="successBody"></div>
+    <div class="actions" style="margin-top:12px;">
+      <button class="btn" onclick="startNewInquiry()">New Inquiry / Create SO</button>
+      <button class="btn secondary" onclick="google.script.host.close()">Close</button>
+    </div>
+  </div>
+
+  <script>
+    function formatPhoneUS_(raw){
+      const d = String(raw||'').replace(/\D+/g,'');
+      if (d.length === 10) return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
+      if (d.length === 11 && d[0]==='1') return `+1 (${d.slice(1,4)}) ${d.slice(4,7)}-${d.slice(7)}`;
+      return raw || '';
+    }
+
+    function submitNewCustomer(){
+      const $ = id => document.getElementById(id);
+      const businessName = $('businessName').value.trim();
+      const contactName  = $('contactName').value.trim();
+      const phone        = $('phone').value.trim();
+      const email        = $('email').value.trim();
+
+      const street    = $('street').value.trim();
+      const city      = $('city').value.trim();
+      const stateCode = $('stateCode').value.trim().toUpperCase();
+      const zip       = $('zip').value.trim();
+      const notes     = $('notes').value.trim();
+
+      const pcm = Array.from(document.querySelectorAll('input[name="pcm"]:checked')).map(x=>x.value);
+
+      const picks = Array.from(document.querySelectorAll('input[name="hip"]:checked')).map(x=>x.value);
+      const other = document.getElementById('hip_other').checked ? (document.getElementById('hip_other_text').value.trim()) : '';
+      const interestList = picks.slice(); if (other) interestList.push(other);
+
+      const err = document.getElementById('err');
+      if (!businessName || !contactName || (!phone && !email)) { err.style.display = 'block'; return; }
+      err.style.display = 'none';
+
+      const btn = document.getElementById('saveBtn'); btn.disabled = true;
+
+      const payload = {
+        businessName, contactName, phone, email,
+        street, city, stateCode, zip,
+        interestList, notes, pcm
+      };
+      console.log('[dlg_customer] submit →', payload);
+
+      google.script.run
+        .withSuccessHandler(res => {
+          console.log('[dlg_customer] submit ←', res);
+          if (!res || !res.ok) { alert('Something went wrong.'); btn.disabled = false; return; }
+
+          const phoneFmt = formatPhoneUS_(phone);
+          const addr = [street, city, stateCode, zip].filter(Boolean).join(', ');
+          const rows = [
+            `<b>Customer ID:</b> ${res.summary?.customerId || res.customerId || ''}`,
+            `<b>Business:</b> ${res.summary?.businessName || businessName}`,
+            `<b>Contact:</b> ${res.summary?.contactName || contactName}`,
+            phoneFmt ? `<b>Phone:</b> ${phoneFmt}` : '',
+            email ? `<b>Email:</b> ${email}` : '',
+            addr ? `<b>Address:</b> ${addr}` : ''
+          ].filter(Boolean);
+
+          document.getElementById('successBody').innerHTML = rows.join('<br>');
+          document.getElementById('formPanel').classList.add('hidden');
+          document.getElementById('successPanel').classList.remove('hidden');
+        })
+        .withFailureHandler(e => {
+          alert('Save failed: ' + (e && e.message ? e.message : e));
+          btn.disabled = false;
+        })
+        .admSubmitNewCustomer(payload);
+    }
+
+    document.addEventListener('change', (e)=>{
+      if (e.target && e.target.id === 'hip_other') {
+        const t = document.getElementById('hip_other_text');
+        t.disabled = !e.target.checked;
+        if (e.target.checked) t.focus(); else t.value = '';
+      }
+    });
+
+    function startNewInquiry(){
+      google.script.run
+        .withSuccessHandler(() => { google.script.host.close(); })
+        .admOpenNewInquiryDialog();
+    }
+  </script>
+</body>
+</html>

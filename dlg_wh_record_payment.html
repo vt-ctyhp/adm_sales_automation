@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <style>
+    body { font: 13px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Arial; margin:0; padding:16px; }
+    h2 { margin: 0 0 12px; }
+    .grid { display:grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+    .full { grid-column: 1 / -1; }
+    label { font-weight:600; display:block; margin-bottom:4px; }
+    input[type=text], input[type=number], input[type=date], input[type=datetime-local], select, textarea { width:100%; padding:8px; box-sizing:border-box; }
+    small { color:#666; }
+    .chips { display:flex; flex-wrap:wrap; gap:6px; }
+    .chip { padding:4px 8px; border:1px solid #ccc; border-radius:14px; cursor:pointer; }
+    .chip.sel { background:#efefef; border-color:#bbb; }
+    table { width:100%; border-collapse:collapse; margin-top:6px; }
+    th, td { border:1px solid #ddd; padding:6px; text-align:left; }
+    th { background:#fafafa; }
+    .row { display:flex; gap:8px; align-items:center; }
+    .actions { display:flex; gap:10px; justify-content:flex-end; margin-top:14px; }
+    details { background:#fafafa; padding:10px; border:1px solid #e5e5e5; }
+    details > summary { cursor:pointer; font-weight:600; }
+    .hint { color:#777; }
+    #debugBox { display:none; white-space:pre-wrap; background:#f8f8f8; border:1px dashed #bbb; padding:8px; margin-top:10px;}
+  </style>
+</head>
+<body>
+  <h2>Record Wholesale Payment</h2>
+
+  <div class="grid">
+    <div>
+      <label>Customer (Company) ID</label>
+      <input id="customerId" type="text" placeholder="e.g., CUST-00123" oninput="state.customerId=this.value">
+    </div>
+    <div>
+      <label>Company Name</label>
+      <input id="companyName" type="text" oninput="state.companyName=this.value">
+    </div>
+
+    <div>
+      <label>Contact Name</label>
+      <input id="contactName" type="text" oninput="state.contactName=this.value">
+    </div>
+    <div>
+      <label>Tracker URL <small>(mirrored)</small></label>
+      <input id="trackerUrl" type="text" placeholder="https://..." oninput="state.trackerUrl=this.value">
+    </div>
+
+    <div class="full">
+      <label>Business Address (one line)</label>
+      <input id="address" type="text" placeholder="123 Any St, City, ST 99999" oninput="state.address=this.value">
+    </div>
+
+    <div>
+      <label>Primary SO</label>
+      <input id="primarySO" type="text" oninput="state.primarySO=this.value">
+    </div>
+    <div>
+      <label>Document Type</label>
+      <select id="docType" onchange="state.docType=this.value; refreshVisibility();">
+        <option value="DEPOSIT_INVOICE">Deposit Invoice</option>
+        <option value="DEPOSIT_RECEIPT">Deposit Receipt</option>
+        <option value="SALES_INVOICE" selected>Sales Invoice</option>
+        <option value="SALES_RECEIPT">Sales Receipt</option>
+        <option value="CREDIT">Credit</option>
+      </select>
+    </div>
+
+    <div>
+      <label>Document Date</label>
+      <input id="docDate" type="datetime-local" oninput="state.docDateISO=this.value">
+    </div>
+    <div id="dueWrap">
+      <label><input id="includeDue" type="checkbox" checked onchange="state.includeDueDate=this.checked; refreshVisibility();"> Include Due Date (prefill +2 days)</label>
+      <input id="dueDate" type="date" oninput="state.dueDateISO=this.value">
+    </div>
+
+    <div class="full">
+      <label>Known SOs for this customer <small>click to select</small></label>
+      <div id="chips" class="chips"></div>
+      <div class="row"><small class="hint">Selected: <span id="selSOs">(none)</span></small></div>
+    </div>
+
+    <div class="full">
+      <label>Add/Type SOs (comma-separated)</label>
+      <input id="typeSOs" type="text" placeholder="SO1001, SO1002, SO1003" onblur="mergeTypedSOs(this.value)">
+    </div>
+
+    <div class="full" id="receiptAlloc">
+      <label>Receipt Allocation</label>
+      <div class="row"><label><input id="evenSplit" type="checkbox" checked onchange="state.evenSplit=this.checked; renderAlloc();"> Evenly split across selected SOs</label></div>
+      <table id="allocTable" style="display:none"><thead><tr><th style="width:160px">SO</th><th>Allocated Amount</th></tr></thead><tbody id="allocBody"></tbody></table>
+      <div class="hint">Allocations are only used for Receipts. When “Evenly split” is checked, we’ll auto-split the payment (penny-correct).</div>
+      <button id="btnToggleAllocEdit" type="button" onclick="toggleAllocEdit()" style="margin-top:6px; display:none;">Edit per-SO allocations…</button>
+    </div>
+
+    <div class="full">
+      <h3>Line Items (auto 1 row per selected SO; description from “Product Description”)</h3>
+      <table>
+        <thead><tr><th style="width:160px">SO</th><th>Description</th><th style="width:80px">Qty</th><th style="width:120px">Amount</th><th style="width:40px"></th></tr></thead>
+        <tbody id="lineBody"></tbody>
+      </table>
+      <button type="button" onclick="addLine()">+ Add Line</button>
+      <div class="hint">Descriptions auto-populate from “Product Description” (00_Master Wholesale). You can edit.</div>
+    </div>
+
+    <div class="full" id="shipWrap">
+      <label><input id="addShip" type="checkbox" checked onchange="state.addShipping=this.checked; renderShip();"> Add Shipping (Sales Invoice only)</label>
+      <table id="shipTable" style="display:none">
+        <thead><tr><th>Label</th><th style="width:120px">Amount</th><th style="width:40px"></th></tr></thead>
+        <tbody id="shipBody"></tbody>
+      </table>
+      <button id="btnAddShip" style="display:none" onclick="addShip()">+ Add Shipping Line</button>
+      <div class="hint">Default: $50 × # of SOs if Subtotal &lt; $2,000. Editable.</div>
+    </div>
+
+    <div class="full" id="receiptWrap">
+      <div class="grid">
+        <div>
+          <label>Payment Amount</label>
+          <input id="pmtAmt" type="number" step="0.01" value="0" oninput="state.pmt.amount=Number(this.value||0); if(state.evenSplit){evenSplit();}">
+        </div>
+        <div>
+          <label>Payment Method</label>
+          <select id="pmtMethod" onchange="state.pmt.method=this.value">
+            <option value="">-- Select --</option>
+            <option>Wire</option>
+            <option>ACH</option>
+            <option>Zelle</option>
+            <option>Credit Card</option>
+            <option>Cash</option>
+            <option>Check</option>
+            <option>Other</option>
+          </select>
+        </div>
+        <div>
+          <label>Reference</label>
+          <input id="pmtRef" type="text" oninput="state.pmt.reference=this.value">
+        </div>
+        <div>
+          <label>Notes</label>
+          <input id="pmtNotes" type="text" oninput="state.pmt.notes=this.value">
+        </div>
+        <div>
+          <label>Payment Date/Time</label>
+          <input id="pmtDT" type="datetime-local" oninput="state.pmt.dateTimeISO=this.value">
+        </div>
+      </div>
+    </div>
+
+    <div class="full">
+      <details>
+        <summary>Advanced</summary>
+        <div class="grid" style="margin-top:8px;">
+          <div>
+            <label>Supersedes Doc# (optional)</label>
+            <input id="supersedes" type="text" placeholder="Doc number to replace/void">
+          </div>
+          <div>
+            <label>Action</label>
+            <select id="supAction">
+              <option value="REPLACE" selected>Replace (mark prior REPLACED)</option>
+              <option value="VOID">Void (mark prior VOID)</option>
+            </select>
+          </div>
+          <div class="full">
+            <label>Override Doc Number (optional)</label>
+            <input id="docNoOverride" type="text" placeholder="If blank, system will assign">
+          </div>
+        </div>
+      </details>
+    </div>
+
+    <div id="debugBox"></div>
+  </div>
+
+  <div class="actions">
+    <button onclick="google.script.host.close()">Cancel</button>
+    <button onclick="submit()">Save</button>
+  </div>
+
+<script>
+const state = {
+  customerId:'', companyName:'', contactName:'', address:'', trackerUrl:'',
+  primarySO:'', docType:'SALES_INVOICE',
+  docDateISO:'', includeDueDate:true, dueDateISO:'',
+  soList:[], selectedSOs:new Set(),
+  evenSplit:true, allocations:{},
+  lines:[], shipping:[], addShipping:true,
+  pmt:{ amount:0, method:'', reference:'', notes:'', dateTimeISO:'' }
+};
+
+function $(id){ return document.getElementById(id); }
+function chip(so, sel){
+  const s=document.createElement('span');
+  s.className='chip'+(sel?' sel':''); s.textContent=so;
+  s.onclick=()=>{ if(state.selectedSOs.has(so)) state.selectedSOs.delete(so); else state.selectedSOs.add(so); syncLinesWithSOs(); renderSO(); };
+  return s;
+}
+
+function renderSO(){
+  const chips=$('chips'); chips.innerHTML='';
+  (window._knownSOs||[]).forEach(o=>chips.appendChild(chip(o.soNumber, state.selectedSOs.has(o.soNumber))));
+  const sel = Array.from(state.selectedSOs); $('selSOs').textContent = sel.join(', ')||'(none)';
+  renderAlloc(); renderLines(); renderShip();
+}
+
+function mergeTypedSOs(text){
+  (text||'').split(',').map(s=>s.trim()).filter(Boolean).forEach(so=> state.selectedSOs.add(so));
+  syncLinesWithSOs(); renderSO();
+}
+
+function syncLinesWithSOs(){
+  const known = {}; (window._knownSOs||[]).forEach(o=> known[o.soNumber] = o.productDesc || '');
+  const have = new Set(state.lines.map(l=>String(l.so||'')));
+  Array.from(state.selectedSOs).forEach(so=>{
+    if (!have.has(so)) state.lines.push({ so, desc: known[so]||'', qty:1, amt:0 });
+  });
+  state.lines = state.lines.filter(l => !l.so || state.selectedSOs.has(l.so));
+}
+
+function renderAlloc(){
+  const isReceipt = (state.docType==='DEPOSIT_RECEIPT' || state.docType==='SALES_RECEIPT');
+  $('receiptAlloc').style.display = isReceipt ? '' : 'none';
+  $('btnToggleAllocEdit').style.display = (isReceipt && !state.evenSplit) ? '' : (isReceipt ? '' : 'none');
+  const table = $('allocTable'); table.style.display = (isReceipt && !state.evenSplit) ? '' : 'none';
+  if (!isReceipt) return;
+
+  const body=$('allocBody'); body.innerHTML='';
+  const arr=Array.from(state.selectedSOs);
+  if (!arr.length) { body.innerHTML='<tr><td colspan="2" class="hint">Select SOs to allocate.</td></tr>'; return; }
+  if (state.evenSplit && state.pmt.amount>0) { evenSplit(); }
+
+  arr.forEach(so=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td>${so}</td>
+      <td><input type="number" step="0.01" value="${Number(state.allocations[so]||0)}" oninput="state.allocations['${so}']=Number(this.value||0)"></td>`;
+    body.appendChild(tr);
+  });
+}
+
+function toggleAllocEdit(){ state.evenSplit = !state.evenSplit; renderAlloc(); }
+function addLine(){ state.lines.push({so: (Array.from(state.selectedSOs)[0]||state.primarySO||''), desc:'', qty:1, amt:0}); renderLines(); }
+function removeLine(i){ state.lines.splice(i,1); renderLines(); }
+function setLine(i,k,v){ if(k==='qty'||k==='amt'){ v=Number(v||0); } state.lines[i][k]=v; }
+
+function renderLines(){
+  const body=$('lineBody'); body.innerHTML='';
+  const opts = Array.from(state.selectedSOs).map(so=>`<option value="${so}">${so}</option>`).join('');
+  state.lines.forEach((ln,i)=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML = `
+      <td><select data-so-line="1" onchange="setLine(${i},'so',this.value)">${opts||`<option value="">(no SOs)</option>`}</select></td>
+      <td><input type="text" value="${ln.desc||''}" oninput="setLine(${i},'desc',this.value)"></td>
+      <td><input type="number" step="1" value="${ln.qty||0}" oninput="setLine(${i},'qty',this.value)"></td>
+      <td><input type="number" step="0.01" value="${ln.amt||0}" oninput="setLine(${i},'amt',this.value)"></td>
+      <td><button onclick="removeLine(${i})">✕</button></td>`;
+    body.appendChild(tr);
+    tr.querySelector('select').value = ln.so||'';
+  });
+}
+
+function renderShip(){
+  const show = (state.docType==='SALES_INVOICE' && state.addShipping);
+  $('shipTable').style.display = show ? '' : 'none';
+  $('btnAddShip').style.display = show ? '' : 'none';
+  if (show && !state.shipping.length) state.shipping.push({label:'Shipping', amount:0});
+  const body=$('shipBody'); body.innerHTML='';
+  state.shipping.forEach((s,i)=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML = `
+      <td><input type="text" value="${s.label||'Shipping'}" oninput="state.shipping[${i}].label=this.value"></td>
+      <td><input type="number" step="0.01" value="${Number(s.amount||0)}" oninput="state.shipping[${i}].amount=Number(this.value||0)"></td>
+      <td><button onclick="state.shipping.splice(${i},1); renderShip();">✕</button></td>`;
+    body.appendChild(tr);
+  });
+}
+function addShip(){ state.shipping.push({label:'Shipping', amount:0}); renderShip(); }
+
+function evenSplit(){
+  const arr=Array.from(state.selectedSOs);
+  if (!arr.length || !state.pmt.amount) return;
+  const per = Number((state.pmt.amount/arr.length).toFixed(2));
+  arr.forEach(so=> state.allocations[so]=per );
+  const sum = arr.reduce((s,so)=> s+(state.allocations[so]||0),0);
+  state.allocations[arr[arr.length-1]] = Number((state.allocations[arr[arr.length-1]] + (state.pmt.amount - sum)).toFixed(2));
+  renderAlloc();
+}
+
+function refreshVisibility(){
+  const inv = (state.docType==='DEPOSIT_INVOICE' || state.docType==='SALES_INVOICE');
+  $('dueWrap').style.display = inv ? '' : 'none';
+  $('shipWrap').style.display = (state.docType==='SALES_INVOICE') ? '' : 'none';
+  $('receiptWrap').style.display = (state.docType==='DEPOSIT_RECEIPT' || state.docType==='SALES_RECEIPT') ? '' : 'none';
+  $('receiptAlloc').style.display = (state.docType==='DEPOSIT_RECEIPT' || state.docType==='SALES_RECEIPT') ? '' : 'none';
+}
+
+function renderKnown(soList){
+  window._knownSOs = soList || [];
+  console.debug('[ADM_DEBUG] knownSOs ->', window._knownSOs);
+  renderSO();
+}
+
+function submit(){
+  if (!state.customerId) return alert('Customer ID required.');
+  if (!state.primarySO)  return alert('Primary SO required.');
+  if (!state.selectedSOs.size) return alert('Select/type at least one SO.');
+  if ((state.docType==='DEPOSIT_RECEIPT' || state.docType==='SALES_RECEIPT') && !(Number(state.pmt.amount||0)>0))
+    return alert('Payment amount is required for receipts.');
+
+  const payload = {
+    customerId: state.customerId, companyName: state.companyName, contactName: state.contactName, address: state.address, trackerUrl: state.trackerUrl,
+    docType: state.docType,
+    primarySO: state.primarySO, soList: Array.from(state.selectedSOs),
+    docDateISO: state.docDateISO,
+    includeDueDate: (state.docType==='DEPOSIT_INVOICE' || state.docType==='SALES_INVOICE') ? $('includeDue').checked : false,
+    dueDateISO: (state.docType==='DEPOSIT_INVOICE' || state.docType==='SALES_INVOICE') && $('includeDue').checked ? $('dueDate').value : '',
+    evenSplit: (state.docType==='DEPOSIT_RECEIPT' || state.docType==='SALES_RECEIPT') ? $('evenSplit').checked : undefined,
+    allocations: Object.entries(state.allocations).map(([so,amount])=>({so, amount:Number(amount||0)})),
+    lines: state.lines,
+    addShipping: (state.docType==='SALES_INVOICE') ? $('addShip').checked : false,
+    shipping: state.shipping,
+    pmt: state.pmt,
+    supersedesDocNumber: $('supersedes').value.trim(),
+    supersedeAction: $('supAction').value,
+    docNumberOverride: $('docNoOverride').value.trim()
+  };
+  console.debug('[ADM_DEBUG] submit payload ->', payload);
+
+  google.script.run.withSuccessHandler(res=>{
+    console.debug('[ADM_DEBUG] wh_submitPayment result ->', res);
+    if (res && res.ok) {
+      alert(`Saved.\nType: ${res.docType}\nDoc#: ${res.docNumber}${res.overageCredit?`\nUnapplied Credit: $${res.overageCredit.toFixed(2)}`:''}`);
+      google.script.host.close();
+    } else {
+      alert('Save failed.');
+    }
+  }).withFailureHandler(err=>{
+    console.error('[ADM_DEBUG] wh_submitPayment error ->', err);
+    alert('Error: ' + (err && err.message ? err.message : err));
+  }).wh_submitPayment(payload);
+}
+
+function boot(){
+  google.script.run.withSuccessHandler((resp)=>{
+    const {nowIso, ctx, debug} = resp || {};
+    if (debug && debug.enabled) {
+      $('debugBox').style.display = 'block';
+      $('debugBox').textContent =
+        'DEBUG ON\nCtx: ' + JSON.stringify(ctx, null, 2) + '\n\nProps: ' + JSON.stringify(debug, null, 2);
+      console.debug('[ADM_DEBUG] wh_init ->', resp);
+    }
+
+    state.customerId = ctx.customerId||'';    $('customerId').value=state.customerId;
+    state.companyName= ctx.companyName||'';   $('companyName').value=state.companyName;
+    state.contactName= ctx.contactName||'';   $('contactName').value=state.contactName;
+    state.address    = ctx.address||'';       $('address').value=state.address;
+    state.trackerUrl = ctx.trackerUrl||'';    $('trackerUrl').value=state.trackerUrl;
+    state.primarySO  = ctx.soNumber||'';      $('primarySO').value=state.primarySO;
+
+    state.pmt.dateTimeISO = (nowIso||'').slice(0,16); $('pmtDT').value = state.pmt.dateTimeISO;
+    state.docDateISO = (nowIso||'').slice(0,16);      $('docDate').value = state.docDateISO;
+    const d = new Date(nowIso); d.setDate(d.getDate()+2); $('dueDate').value = d.toISOString().slice(0,10);
+
+    state.lines = [];
+    refreshVisibility();
+
+    // NEW: if no customerId, still fetch known info using primary SO so descriptions prefill
+    google.script.run.withSuccessHandler(list=>{
+      renderKnown(list);
+      if (state.primarySO) state.selectedSOs.add(state.primarySO);
+      syncLinesWithSOs();
+      renderSO();
+    }).wh_getKnownSOs(state.customerId, state.primarySO);
+
+  }).wh_init();
+}
+
+window.addEventListener('load', boot);
+</script>
+</body>
+</html>

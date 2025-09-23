@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <style>
+    body { font: 13px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Arial; margin:0; padding:16px; }
+    h2 { margin: 0 0 12px; }
+    .row { display:flex; gap:12px; align-items:center; margin-bottom:10px; }
+    input[type=text], select { padding:8px; }
+    table { width:100%; border-collapse:collapse; margin-top:6px; }
+    th, td { border:1px solid #ddd; padding:6px; text-align:left; }
+    th { background:#fafafa; }
+    .hint { color:#777; }
+  </style>
+</head>
+<body>
+  <h2>Payment Summary</h2>
+
+  <div class="row">
+    <div><label>Scope</label>
+      <select id="scope" onchange="refresh()">
+        <option value="SO">Selected SO</option>
+        <option value="CUSTOMER">Customer</option>
+        <option value="GROUP">Invoice Group</option>
+      </select>
+    </div>
+    <div><label>SO</label><input id="so" type="text"></div>
+    <div><label>Customer ID</label><input id="cid" type="text"></div>
+    <div><label>InvoiceGroupID</label><input id="gid" type="text"></div>
+    <div><button onclick="refresh()">Show</button></div>
+  </div>
+
+  <div id="out" class="hint">Loading…</div>
+
+<script>
+function $(s){ return document.querySelector(s); }
+
+function refresh(){
+  google.script.run.withSuccessHandler(render).wh_getSummary({
+    scope: $('#scope').value,
+    soNumber: $('#so').value.trim(),
+    customerId: $('#cid').value.trim(),
+    invoiceGroupId: $('#gid').value.trim()
+  });
+}
+function render(res){
+  console.debug('[ADM_DEBUG] summary ->', res);
+  if (!res || !res.items) { $('#out').textContent='No data.'; return; }
+  const rows = res.items.map(it=>`
+    <tr>
+      <td>${it.DOC_DATE || it.PaymentDateTime || ''}</td>
+      <td>${it.DocType||''} ${it.DocFlavor||''}</td>
+      <td>${it.DocNumber||''}</td>
+      <td>${it.InvoiceGroupID||''}</td>
+      <td>${it.SOsCSV||''}</td>
+      <td>${it.AmountGross||''}</td>
+      <td>${it.Method||''}</td>
+      <td>${it.DocStatus||''}</td>
+      <td>${it.PDF_URL?`<a href="${it.PDF_URL}" target="_blank">PDF</a>`:''}</td>
+    </tr>`).join('');
+  $('#out').innerHTML = `
+    <table>
+      <thead><tr><th>Date</th><th>Doc</th><th>Doc #</th><th>Group</th><th>SOs</th><th>Amount</th><th>Method</th><th>Status</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="9" class="hint">No rows.</td></tr>'}</tbody>
+    </table>`;
+}
+google.script.run.withSuccessHandler(({ctx})=>{
+  if (ctx && ctx.soNumber) $('#so').value = ctx.soNumber;
+  if (ctx && ctx.customerId) $('#cid').value = ctx.customerId;
+  $('#scope').value = 'SO';
+  refresh();
+}).wh_init();
+</script>
+</body>
+</html>

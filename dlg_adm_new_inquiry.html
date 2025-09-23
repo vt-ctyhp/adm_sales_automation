@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <style>
+    body { font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Arial; padding: 12px 16px; }
+    h2 { margin: 8px 0 12px; }
+    .row { display:flex; gap:12px; margin:6px 0; }
+    .row > label { flex:1; display:flex; flex-direction:column; }
+    input[type=text], input[type=date], select, textarea {
+      padding:8px; border:1px solid #d0d0d0; border-radius:6px; background:#fff;
+    }
+    textarea { min-height: 120px; }
+    .box { border:1px solid #e5e5e5; border-radius:8px; padding:12px; margin:8px 0; background:#fafafa; }
+    .muted { color:#666; font-size:12px; }
+    .actions { display:flex; justify-content:space-between; margin-top:12px; }
+    .btn { background:#1a73e8; color:#fff; border:none; border-radius:6px; padding:8px 12px; cursor:pointer; }
+    .btn.secondary { background:#e8eaed; color:#111; }
+    .hidden { display:none; }
+    .pill { padding:2px 8px; border-radius:999px; background:#eef3ff; font-size:12px; margin-left:6px;}
+    .uploads li { margin:4px 0; }
+    #odoo{
+      width:100%; min-height:360px; height:360px; resize:vertical;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,"Liberation Mono","Courier New",monospace;
+      font-size:13px; line-height:1.45; white-space:pre; background:#fff;
+      border:1px solid #d0d0d0; border-radius:6px; padding:10px;
+    }
+    /* Debug panel */
+    #dbg { font:12px/1.4 ui-monospace, monospace; background:#fff; border:1px solid #eee; border-radius:6px; padding:8px; max-height:140px; overflow:auto; }
+    #dbg b{ color:#334155; }
+  </style>
+</head>
+<body>
+  <div id="step1">
+    <div class="box">
+      <div class="row">
+        <label>Customer
+          <select id="customerName" required></select>
+          <span class="muted" style="margin-top:4px">
+            Not listed? <a href="#" onclick="google.script.run.admOpenNewCustomerDialog(); return false;">➕ Add New Customer</a>
+            &nbsp;|&nbsp;
+            <a href="#" onclick="refreshCustomers(); return false;">Refresh list</a>
+          </span>
+        </label>
+        <label>Product (short description)
+          <input id="product" type="text" placeholder="e.g., 18KY Ring Setting" required>
+        </label>
+      </div>
+      <div class="row">
+        <label>Product Type <select id="productType"></select></label>
+        <label>Priority Level
+          <select id="priorityLevel">
+            <option value=""></option><option>P1</option><option>P2</option>
+          </select>
+        </label>
+        <label>Quantity <input id="quantity" type="text" value="1"></label>
+      </div>
+    </div>
+
+    <div class="box">
+      <strong>Design Details <span class="pill">Fill or leave notes</span></strong>
+      <div id="ringFields" class="typeFields">
+        <div class="row">
+          <label>Accent Diamond Type <select id="accType"></select></label>
+          <label>Metal <select id="metal"></select></label>
+        </div>
+        <div class="row">
+          <label>Ring Style <select id="ringStyle"></select></label>
+          <label>US Size <select id="ringSize"></select></label>
+        </div>
+        <div class="row">
+          <label>Band Width (mm) <input id="bandWidth" type="text" placeholder="e.g., 1.8"></label>
+          <label>Center Stone Type <input id="centerType" type="text" placeholder="e.g., Natural/Lab"></label>
+        </div>
+        <div class="row">
+          <label>Shape <select id="shape"></select></label>
+          <label>Diamond Dimension <input id="dimensions" type="text" placeholder="e.g., 10.3 x 7.4"></label>
+        </div>
+      </div>
+
+      <div id="pendantFields" class="typeFields hidden">
+        <div class="row">
+          <label>Metal <select id="pd_metal"></select></label>
+          <label>Chain Style <select id="pd_chainStyle"></select></label>
+          <label>Length <input id="pd_length" type="text" placeholder="inches"></label>
+        </div>
+        <div class="row"><label>Bail Type <input id="pd_bailType" type="text"></label></div>
+      </div>
+
+      <div id="chainFields" class="typeFields hidden">
+        <div class="row">
+          <label>Metal <select id="ch_metal"></select></label>
+          <label>Chain Style <select id="ch_chainStyle"></select></label>
+          <label>Width (mm) <input id="ch_width" type="text"></label>
+          <label>Length (in) <input id="ch_length" type="text"></label>
+        </div>
+      </div>
+
+      <div id="earringFields" class="typeFields hidden">
+        <div class="row">
+          <label>Metal <select id="er_metal"></select></label>
+          <label>Type <select id="er_type"></select></label>
+          <label>Back Type <input id="er_backType" type="text"></label>
+        </div>
+      </div>
+
+      <div id="braceletFields" class="typeFields hidden">
+        <div class="row">
+          <label>Metal <select id="br_metal"></select></label>
+          <label>Style <select id="br_style"></select></label>
+          <label>Length <input id="br_length" type="text"></label>
+        </div>
+      </div>
+
+      <div class="row">
+        <label>Design Notes (3 bullets or free text)
+          <textarea id="notes" placeholder="- note 1&#10;- note 2&#10;- note 3"></textarea>
+        </label>
+      </div>
+    </div>
+
+    <div class="actions">
+      <span class="muted">Step 1 of 2 — Fill design details.</span>
+      <button class="btn" onclick="toStep2()">Next</button>
+    </div>
+  </div>
+
+  <div id="step2" class="hidden">
+    <div class="box">
+      <strong>Copy into Odoo (Description / Design Details)</strong>
+      <textarea id="odoo" readonly></textarea>
+      <div class="row">
+        <label>SO# (format 12.3456)
+          <input id="so" type="text" placeholder="12.3456"
+                 pattern="^\s*(?:SO#?)?\s*\d{2}\.\d{4}\s*$"
+                 title='Enter "12.3456" or "SO12.3456"'>
+        </label>
+        <label>SO URL <input id="soUrl" type="text" placeholder="https://..."></label>
+        <label>Inquiry Date <input id="inquiryDate" type="date" required></label>
+        <label>Quotation Date <input id="quotationDate" type="date"></label>
+      </div>
+    </div>
+
+    <div class="box">
+      <strong>Upload files to 05‑3D</strong>
+      <div class="row">
+        <label>Upload Type <select id="uploadType"></select></label>
+        <label>Choose File <input id="file" type="file" accept="image/*,.pdf,.stl,.step,.igs"></label>
+        <div style="align-self:flex-end;">
+          <button class="btn secondary" onclick="upload()">Upload</button>
+        </div>
+      </div>
+      <ul id="uploads" class="uploads"></ul>
+      <div class="muted">Tip: If you upload a <b>Product Image</b>, we’ll keep a Drive <i>fileId</i> (best) and an =IMAGE(...) (fallback).</div>
+    </div>
+
+    <div class="actions">
+      <button class="btn secondary" onclick="backTo1()">Back</button>
+      <button id="createBtn" type="button" class="btn">Create Row & Folders</button>
+    </div>
+
+    <div class="box">
+      <strong>Debug</strong>
+      <div id="dbg"></div>
+    </div>
+  </div>
+
+  <script>
+    const BOOT = <?!= JSON.stringify(BOOTSTRAP) ?>;
+    const $ = id => document.getElementById(id);
+    const uploads = [];  // keep returned {fileId, thumbUrl, imageFormula}
+
+    function dbg(){ try {
+      const m = Array.prototype.slice.call(arguments).map(x => (typeof x==='object'? JSON.stringify(x): String(x))).join(' ');
+      const el = document.getElementById('dbg'); if (!el) return;
+      const line = document.createElement('div'); line.innerHTML = m; el.appendChild(line);
+      el.scrollTop = el.scrollHeight;
+      console.log('[dlg]', m);
+    } catch(_){}
+
+    }
+
+    function fillSelect(id, arr){
+      const sel=$(id);
+      sel.innerHTML='';
+      (arr || []).forEach(v=>{ const o=document.createElement('option'); o.text=v; sel.appendChild(o); });
+    }
+
+    function refreshCustomers(){
+      dbg('<b>refreshCustomers</b>');
+      google.script.run.withSuccessHandler(list => {
+        dbg('customers:', (list||[]).length);
+        fillSelect('customerName', list || []);
+      }).admListCRMCustomers();
+    }
+
+    (function init(){
+      dbg('<b>init</b> ADM_DEBUG=', !!BOOT.debug);
+      fillSelect('productType', BOOT.productTypes);
+      fillSelect('metal', BOOT.metals);
+      fillSelect('customerName', BOOT.customers);
+      (function setToday(){ try { $('inquiryDate').value = BOOT.today; } catch(_){} })();
+
+      fillSelect('pd_metal', BOOT.metals);
+      fillSelect('ch_metal', BOOT.metals);
+      fillSelect('er_metal', BOOT.metals);
+      fillSelect('br_metal', BOOT.metals);
+
+      fillSelect('ringStyle', BOOT.ringStyles);
+      fillSelect('accType', BOOT.accentTypes);
+      fillSelect('ringSize', BOOT.ringSizes);
+      fillSelect('shape', BOOT.shapes);
+
+      fillSelect('pd_chainStyle', BOOT.chainStyles);
+      fillSelect('ch_chainStyle', BOOT.chainStyles);
+      fillSelect('er_type', BOOT.earringTypes);
+      fillSelect('br_style', BOOT.braceletTypes);
+
+      fillSelect('uploadType', BOOT.uploadTypes);
+
+      $('productType').addEventListener('change', syncFields);
+      syncFields();
+
+      const btn = document.getElementById('createBtn');
+      if (btn) btn.addEventListener('click', (ev) => { ev.preventDefault(); submitAll(); });
+    })();
+
+    function syncFields(){
+      const t = ($('productType').value || '').toLowerCase();
+      const ids = ['ringFields','pendantFields','chainFields','earringFields','braceletFields'];
+      ids.forEach(id => $(id).classList.add('hidden'));
+      if (t.includes('ring')) $('ringFields').classList.remove('hidden');
+      else if (t.includes('pendant')) $('pendantFields').classList.remove('hidden');
+      else if (t.includes('chain')) $('chainFields').classList.remove('hidden');
+      else if (t.includes('earring')) $('earringFields').classList.remove('hidden');
+      else if (t.includes('bracelet')) $('braceletFields').classList.remove('hidden');
+    }
+
+    function toStep2(){
+      const form = collectStep1();
+      dbg('<b>toStep2</b> form=', form);
+      google.script.run.withSuccessHandler(text => {
+        $('odoo').value = text;
+        $('step1').classList.add('hidden');
+        $('step2').classList.remove('hidden');
+      }).admBuildOdooPaste(form);
+    }
+    function backTo1(){
+      $('step2').classList.add('hidden');
+      $('step1').classList.remove('hidden');
+    }
+
+    function collectStep1(){
+      const T = $('productType').value;
+      const o = {
+        productType: T,
+        customerName: $('customerName').value,
+        product: $('product').value,
+        priorityLevel: $('priorityLevel').value,
+        quantity: $('quantity').value,
+        notes: $('notes').value
+      };
+      if (T.includes('Ring')){
+        o.accType = $('accType').value; o.metal=$('metal').value; o.ringStyle=$('ringStyle').value;
+        o.ringSize=$('ringSize').value; o.bandWidth=$('bandWidth').value; o.centerType=$('centerType').value;
+        o.shape=$('shape').value; o.dimensions=$('dimensions').value;
+      } else if (T.includes('Pendant')){
+        o.metal=$('pd_metal').value; o.chainStyle=$('pd_chainStyle').value; o.length=$('pd_length').value; o.bailType=$('pd_bailType').value;
+      } else if (T.includes('Chain')){
+        o.metal=$('ch_metal').value; o.chainStyle=$('ch_chainStyle').value; o.width=$('ch_width').value; o.length=$('ch_length').value;
+      } else if (T.includes('Earrings')){
+        o.metal=$('er_metal').value; o.earringType=$('er_type').value; o.backType=$('er_backType').value;
+      } else if (T.includes('Bracelet')){
+        o.metal=$('br_metal').value; o.braceletType=$('br_style').value; o.length=$('br_length').value;
+      }
+      return o;
+    }
+
+    async function upload(){
+      const btn = document.querySelector('button.btn.secondary[onclick="upload()"]');
+      const f = document.getElementById('file').files[0];
+      
+      if (!f) {
+        alert('Choose a file first.');
+        return;
+      }
+      
+      const so = document.getElementById('so').value.trim();
+      if (!so) {
+        alert('Enter SO# first (e.g., 12.3456).');
+        return;
+      }
+      
+      const ut = document.getElementById('uploadType').value.trim();
+      
+      // Show uploading state
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Uploading...';
+      }
+      
+      // Log to debug panel
+      dbg('<b>Starting upload</b> file=' + f.name + ' size=' + f.size);
+      
+      // Read file with FileReader
+      const reader = new FileReader();
+      
+      reader.onload = function(evt) {
+        try {
+          // Extract base64 data
+          const base64String = evt.target.result.split(',')[1];
+          
+          // Prepare payload
+          const uploadData = {
+            bytesBase64: base64String,
+            filename: f.name,
+            mimeType: f.type || 'application/octet-stream',
+            so: so,
+            customerName: document.getElementById('customerName').value,
+            product: document.getElementById('product').value,
+            isProductImage: (ut === 'Product Image')
+          };
+          
+          dbg('<b>Sending to server</b>');
+          
+          // Call server function
+          google.script.run
+            .withSuccessHandler(function(result) {
+              dbg('<b>Server response:</b> ' + JSON.stringify(result));
+              
+              if (btn) {
+                btn.disabled = false;
+                btn.textContent = 'Upload';
+              }
+              
+              if (result && result.ok) {
+                // Add to uploads list
+                const li = document.createElement('li');
+                li.textContent = f.name + ' - ' + ut + ' (uploaded)';
+                document.getElementById('uploads').appendChild(li);
+                
+                // Store product image info
+                if (ut === 'Product Image' && result.fileId) {
+                  uploads.push({
+                    kind: 'PRODUCT_IMAGE',
+                    fileId: result.fileId,
+                    formula: '',
+                    thumbUrl: ''
+                  });
+                  dbg('<b>Product image stored</b> fileId=' + result.fileId);
+                }
+                
+                alert('File uploaded successfully!');
+                document.getElementById('file').value = ''; // Clear file input
+              } else {
+                alert('Upload failed: ' + (result ? result.reason : 'Unknown error'));
+              }
+            })
+            .withFailureHandler(function(error) {
+              dbg('<b>Upload error:</b> ' + error.toString());
+              alert('Upload failed: ' + error.toString());
+              if (btn) {
+                btn.disabled = false;
+                btn.textContent = 'Upload';
+              }
+            })
+            .admUploadFile(uploadData);
+            
+        } catch (e) {
+          dbg('<b>Error preparing upload:</b> ' + e.toString());
+          alert('Error: ' + e.toString());
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Upload';
+          }
+        }
+      };
+      
+      reader.onerror = function(error) {
+        dbg('<b>FileReader error:</b> ' + error.toString());
+        alert('Failed to read file');
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = 'Upload';
+        }
+      };
+      
+      // Start reading the file
+      dbg('Reading file as data URL...');
+      reader.readAsDataURL(f);
+    }
+
+    function submitAll(){
+      const base = collectStep1();
+
+      const inq = document.getElementById('inquiryDate');
+      if (!inq.checkValidity()) { inq.reportValidity(); inq.focus(); return; }
+
+      const soInput = document.getElementById('so');
+      if (!soInput) return;
+      if (!soInput.checkValidity()) { soInput.reportValidity(); soInput.focus(); return; }
+
+      let so = soInput.value.trim().replace(/^SO#?/i,'').trim();
+      // Warn if no Product Image was captured by the UI (uploads array)
+      // Allow override so they can proceed without one
+      const img = uploads.find(u => u.kind === 'PRODUCT_IMAGE') || null;
+      const hasImg = !!uploads.find(u => u.kind==='PRODUCT_IMAGE');
+      if (!hasImg) {
+        const proceed = confirm(
+          'No Product Image was uploaded in Step 2.\n' +
+          'I can try to auto-pick the latest image from 05-3D if one exists.\n\n' +
+          'Press OK to continue, or Cancel to go back and upload.'
+        );
+        if (!proceed) return;
+      }
+
+      const payload = Object.assign({}, base, {
+        so: so,
+        soUrl: document.getElementById('soUrl').value.trim(),
+        inquiryDate: document.getElementById('inquiryDate').value,
+        quotationDate: document.getElementById('quotationDate').value,
+        odoo: document.getElementById('odoo').value,
+        productImageFormula:  img ? (img.formula  || '') : '',
+        productImageFileId:   img ? (img.fileId   || '') : '',
+        productImageThumbUrl: img ? (img.thumbUrl || '') : ''   // ← FIXED missing comma
+      });
+
+      dbg('<b>submitAll →</b>', payload);
+
+      const submitBtn = document.getElementById('createBtn');
+      if (submitBtn) submitBtn.disabled = true;
+
+      google.script.run
+        .withSuccessHandler(res => {
+          dbg('<b>submitAll ←</b>', res);
+          if (!res || !res.ok) {
+            alert('Submit returned an unexpected result.');
+            if (submitBtn) submitBtn.disabled = false;
+            return;
+          }
+          const msg = [
+            'Created row on Master (row ' + res.masterRow + ').',
+            'Order Folder: ' + res.orderFolderUrl,
+            '05-3D Folder: ' + res.threeDFolderUrl,
+            'Customer Sheet: ' + res.customerSheetUrl
+          ].join('\n');
+          alert(msg);
+          google.script.host.close();
+        })
+        .withFailureHandler(err => {
+          dbg('<b>submitAll FAIL</b>', err && (err.message || err));
+          alert('Submit failed: ' + (err && err.message ? err.message : err));
+          if (submitBtn) submitBtn.disabled = false;
+        })
+        .admSubmitNewInquiry(payload);
+    }
+  </script>
+</body>
+</html>
