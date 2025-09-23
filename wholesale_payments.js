@@ -763,6 +763,7 @@ function writeCreditRow_(customerId, companyName, amount, method, transactionId,
 function wh_applyReceiptToOrders_(allocMap){
   const ss = SpreadsheetApp.getActive();
   const tabNames = WH_ORDERS_TAB_NAMES.length ? WH_ORDERS_TAB_NAMES : ss.getSheets().map(s=>s.getName());
+  const debugging = ADM_isDebug();
 
   const PTD_ALIASES  = ['Paid-to-Date','Paid To Date','Paid-To-Date','Paid to Date','Paid'];
   const OT_ALIASES   = ['Order Total','OrderTotal','Total'];
@@ -778,17 +779,132 @@ function wh_applyReceiptToOrders_(allocMap){
     const cOT  = pickH_(H, OT_ALIASES);
     const cRB  = pickH_(H, RB_ALIASES);
 
+    if (debugging) {
+      dbg('wh_applyReceiptToOrders_: inspecting sheet', {
+        sheet: tab,
+        lastRow: lr,
+        lastColumn: lc,
+        headers: hdr,
+        soCol: cSO,
+        paidToDateCol: cPTD,
+        orderTotalCol: cOT,
+        remainingBalanceCol: cRB
+      });
+    }
+
     const vals = sh.getRange(2,1,lr-1,lc).getValues();
     let touched = false;
+    const touchLog = debugging ? [] : null;
+
     for (let i=0;i<vals.length;i++){
       const r = vals[i];
       const so = String(r[cSO-1]||'').trim(); if (!so || !(so in allocMap)) continue;
       const add = num_(allocMap[so],0); if (add<=0) continue;
-      if (cPTD){ const cur = num_(r[cPTD-1],0); r[cPTD-1] = cur + add; touched = true; }
-      if (cRB && cOT && cPTD){ const ot=num_(r[cOT-1],0); const ptd=num_(r[cPTD-1],0); r[cRB-1] = Math.max(0, round2_(ot-ptd)); touched=true; }
+
+      let rowTouched = false;
+      let rowLog;
+      if (debugging) {
+        rowLog = {
+          sheet: tab,
+          rowIndex: i + 2,
+          so,
+          updates: []
+        };
+      }
+
+      if (cPTD){
+        const cur = num_(r[cPTD-1],0);
+        const next = cur + add;
+        r[cPTD-1] = next;
+        touched = true;
+        rowTouched = true;
+        if (debugging) {
+          rowLog.updates.push({
+            columnIndex: cPTD,
+            columnName: hdr[cPTD-1] || ('Col'+cPTD),
+            before: cur,
+            after: next
+          });
+        }
+      }
+      if (cRB && cOT && cPTD){
+        const ot=num_(r[cOT-1],0);
+        const ptd=num_(r[cPTD-1],0);
+        const prev=num_(r[cRB-1],0);
+        const next=Math.max(0, round2_(ot-ptd));
+        r[cRB-1] = next;
+        touched=true;
+        rowTouched = true;
+        if (debugging) {
+          rowLog.updates.push({
+            columnIndex: cRB,
+            columnName: hdr[cRB-1] || ('Col'+cRB),
+            before: prev,
+            after: next,
+            basis: { orderTotal: ot, paidToDate: ptd }
+          });
+        }
+      }
       vals[i] = r;
+      if (debugging && rowTouched) touchLog.push(rowLog);
     }
-    if (touched) sh.getRange(2,1,lr-1,lc).setValues(vals);
+
+    if (!touched){
+      if (debugging) dbg('wh_applyReceiptToOrders_: no matches on sheet', { sheet: tab, allocKeys: Object.keys(allocMap||{}) });
+      continue;
+    }
+
+    const range = sh.getRange(2,1,lr-1,lc);
+    if (debugging){
+      dbg('wh_applyReceiptToOrders_: attempting write', {
+        sheet: tab,
+        range: range.getA1Notation(),
+        rows: lr-1,
+        columns: lc,
+        headers: hdr,
+        touches: touchLog
+      });
+    }
+
+    try {
+      range.setValues(vals);
+    } catch (err) {
+      if (debugging) {
+        const cellDiagnostics = [];
+        try {
+          const seen = {};
+          (touchLog||[]).forEach(rowInfo => {
+            (rowInfo.updates||[]).forEach(update => {
+              const key = rowInfo.rowIndex + ':' + update.columnIndex;
+              if (seen[key]) return;
+              seen[key] = true;
+              const cell = sh.getRange(rowInfo.rowIndex, update.columnIndex);
+              const formula = cell.getFormula();
+              cellDiagnostics.push({
+                rowIndex: rowInfo.rowIndex,
+                columnIndex: update.columnIndex,
+                columnName: update.columnName,
+                formula: formula || null,
+                hasFormula: !!formula,
+                isBlank: cell.isBlank(),
+                note: cell.getNote() || null
+              });
+            });
+          });
+        } catch (inner){
+          cellDiagnostics.push({ error: 'cell diagnostics failed', message: inner && inner.message });
+        }
+        dbg('wh_applyReceiptToOrders_: write failed', {
+          sheet: tab,
+          range: range.getA1Notation(),
+          headers: hdr,
+          touches: touchLog,
+          cells: cellDiagnostics,
+          error: String(err && err.message || err)
+        });
+      }
+      throw err;
+    }
   }
 }
 
