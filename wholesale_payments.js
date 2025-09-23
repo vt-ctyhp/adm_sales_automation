@@ -45,10 +45,20 @@ const PRODUCT_DESC_ALIASES = pickList_(SP.getProperty('WH_PRODUCT_DESC_ALIASES')
   ['Product Description','Prod Description','Product','Description','Short Description']);
 
 // (Optional) address parts fallback if one‑line address not present
-const STREET_ALIASES = ['Street','Address 1','Addr 1','Address Line 1'];
-const CITY_ALIASES   = ['City','Town'];
-const STATE_ALIASES  = ['State','ST','Province'];
-const ZIP_ALIASES    = ['Zip','ZIP','Postal','Postal Code'];
+const STREET_ALIASES = ['Street','Address 1','Addr 1','Address Line 1','Address Line1','Street Address','Business Street','Business Address Street'];
+const CITY_ALIASES   = ['City','Town','City/Town','Business City'];
+const STATE_ALIASES  = ['State','ST','Province','State/Province','Business State'];
+const ZIP_ALIASES    = ['Zip','ZIP','Zip Code','Postal','Postal Code','Postcode','Business Zip'];
+
+function joinAddressParts_(street, city, state, zip) {
+  const streetPart = String(street||'').trim();
+  const cityPart   = String(city||'').trim();
+  const statePart  = String(state||'').trim();
+  const zipPart    = String(zip||'').trim();
+  const cityState  = [cityPart, statePart].filter(Boolean).join(', ').trim();
+  const tail       = [cityState, zipPart].filter(Boolean).join(' ').trim();
+  return [streetPart, tail].filter(Boolean).join(', ').trim();
+}
 
 // Templates (Google Docs)
 const TPL = {
@@ -125,7 +135,7 @@ function readActiveContext_(){
       const city   = cCity?String(rowVals[cCity-1]||'').trim():'';
       const state  = cState?String(rowVals[cState-1]||'').trim():'';
       const zip    = cZip?String(rowVals[cZip-1]||'').trim():'';
-      address = [street, [city, state].filter(Boolean).join(', '), zip].filter(Boolean).join(', ');
+      address = joinAddressParts_(street, city, state, zip);
     }
   }
 
@@ -226,6 +236,7 @@ function findOrdersRowBySO_(soNumber){
       if (soEq_(s, so)) {
         const out = {
           sheet: name, rowIndex: i+2,
+          soNumber: s,
           customerId: cCID ? String(r[cCID-1]||'').trim() : '',
           companyName: cCMP ? String(r[cCMP-1]||'').trim() : '',
           contactName: cCON ? String(r[cCON-1]||'').trim() : '',
@@ -243,7 +254,7 @@ function findOrdersRowBySO_(soNumber){
           const city   = cCity?String(r[cCity-1]||'').trim():'';
           const state  = cState?String(r[cState-1]||'').trim():'';
           const zip    = cZip?String(r[cZip-1]||'').trim():'';
-          out.address = [street, [city, state].filter(Boolean).join(', '), zip].filter(Boolean).join(', ');
+          out.address = joinAddressParts_(street, city, state, zip);
         }
         dbg('findOrdersRowBySO_: match', out);
         return out;
@@ -327,7 +338,7 @@ function buildCrmPayload_(row, cols){
     const city   = cCity?String(row[cCity-1]||'').trim():'';
     const state  = cState?String(row[cState-1]||'').trim():'';
     const zip    = cZip?String(row[cZip-1]||'').trim():'';
-    address = [street, [city, state].filter(Boolean).join(', '), zip].filter(Boolean).join(', ');
+    address = joinAddressParts_(street, city, state, zip);
   }
   out.address = address;
   out.trackerUrl = cTracker ? String(row[cTracker-1]||'').trim() : '';
@@ -337,6 +348,7 @@ function buildCrmPayload_(row, cols){
 // ============================= LOOKUPS =============================
 function wh_listSOsForCustomer(customerId, limit){
   customerId = String(customerId||'').trim();
+  if (!customerId) return [];
   const ss = SpreadsheetApp.getActive();
   const tabNames = WH_ORDERS_TAB_NAMES.length ? WH_ORDERS_TAB_NAMES : ss.getSheets().map(s=>s.getName());
   dbg('wh_listSOsForCustomer: args', {customerId, limit, tabNames});
@@ -363,10 +375,8 @@ function wh_listSOsForCustomer(customerId, limit){
       const so = String(r[cSO-1]||'').trim();
       if (!so) continue;
 
-      if (customerId) {
-        const id = cCID ? String(r[cCID-1]||'').trim() : '';
-        if (!id || id !== customerId) continue;
-      }
+      const id = cCID ? String(r[cCID-1]||'').trim() : '';
+      if (!id || id !== customerId) continue;
 
       out.push({
         soNumber: so,
@@ -388,9 +398,22 @@ function wh_listSOsForCustomer(customerId, limit){
 
 /** Helper for UI: if customerId empty, still return at least the primary SO row (for desc prefill). */
 function wh_getKnownSOs(customerId, primarySO){
-  if (String(customerId||'').trim()) return wh_listSOsForCustomer(customerId, 250);
+  const id = String(customerId||'').trim();
+  if (id) return wh_listSOsForCustomer(id, 250);
   const found = findOrdersRowBySO_(primarySO);
-  return found ? [{ soNumber: String(primarySO||''), productDesc: found.productDesc||'', sheet: found.sheet, rowIndex: found.rowIndex, customerId: found.customerId||'' }] : [];
+  if (!found) return [];
+  if (found.customerId) {
+    const list = wh_listSOsForCustomer(found.customerId, 250);
+    if (list.length) return list;
+  }
+  const soNum = String(found.soNumber || primarySO || '').trim();
+  return [{
+    soNumber: soNum,
+    productDesc: found.productDesc || '',
+    sheet: found.sheet,
+    rowIndex: found.rowIndex,
+    customerId: found.customerId || ''
+  }];
 }
 
 function wh_findSoFolderId(soNumber){
