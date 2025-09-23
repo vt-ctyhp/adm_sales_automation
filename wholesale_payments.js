@@ -376,7 +376,21 @@ function wh_listSOsForCustomer(customerId, limit){
       if (!so) continue;
 
       const id = cCID ? String(r[cCID-1]||'').trim() : '';
-      if (!id || id !== customerId) continue;
+      if (!id) {
+        dbg('wh_listSOsForCustomer: skipping row (no customer id)', {tab:name, rowIndex:i+2, so});
+        continue;
+      }
+
+      if (!customerIdsEqual_(id, customerId)) {
+        dbg('wh_listSOsForCustomer: skipping row (id mismatch)', {
+          tab: name,
+          rowIndex: i+2,
+          so,
+          rowCustomerId: id,
+          targetCustomerId: customerId
+        });
+        continue;
+      }
 
       out.push({
         soNumber: so,
@@ -833,6 +847,10 @@ function wh_buildDocFromTemplate_(templateId, model, primaryFolderId){
 }
 
 function buildItemRows_(lines, shipping){
+  dbg('buildItemRows_: input', {
+    linesCount: Array.isArray(lines) ? lines.length : 0,
+    shippingCount: Array.isArray(shipping) ? shipping.length : 0
+  });
   const rows = [];
   (lines||[]).forEach(ln=>{
     rows.push([
@@ -843,15 +861,22 @@ function buildItemRows_(lines, shipping){
     ]);
   });
   if (!rows.length) rows.push(['','','','']);
+  dbg('buildItemRows_: output', { rowCount: rows.length });
   return rows;
 }
 
 function injectItemsTable_(body, placeholder, rows){
   const headers = ['ITEM/SO','DESCRIPTION','QTY','TOTAL'];
   const range = body.findText(escapeForFind_(placeholder));
+  dbg('injectItemsTable_: start', {
+    placeholder,
+    rowCount: Array.isArray(rows) ? rows.length : 0,
+    hasRange: !!range
+  });
   const table = makeTable_(headers, rows, { includeHeader: false });
 
   if (!range) {
+    dbg('injectItemsTable_: placeholder not found, appending to body');
     body.appendTable(table).setBorderWidth(0.5);
     return;
   }
@@ -864,6 +889,7 @@ function injectItemsTable_(body, placeholder, rows){
   }
 
   if (!el || !el.getParent) {
+    dbg('injectItemsTable_: element missing parent, appending to body');
     body.appendTable(table).setBorderWidth(0.5);
     return;
   }
@@ -872,12 +898,16 @@ function injectItemsTable_(body, placeholder, rows){
     ? el.asListItem()
     : el.asParagraph();
   const container = paragraph.getParent();
+  const paragraphType = paragraph && paragraph.getType ? String(paragraph.getType()) : 'unknown';
+  const containerType = container && container.getType ? String(container.getType()) : 'unknown';
+  dbg('injectItemsTable_: resolved container', { containerType, paragraphType });
 
   if (container && typeof container.getChildIndex === 'function' && typeof container.insertTable === 'function') {
     const idx = container.getChildIndex(paragraph);
     const inserted = container.insertTable(idx, table);
     inserted.setBorderWidth(0.5);
     paragraph.removeFromParent();
+    dbg('injectItemsTable_: inserted via container.insertTable', { containerType, childIndex: idx });
     return;
   }
 
@@ -886,8 +916,10 @@ function injectItemsTable_(body, placeholder, rows){
     const inserted = body.insertTable(idx, table);
     inserted.setBorderWidth(0.5);
     paragraph.removeFromParent();
+    dbg('injectItemsTable_: inserted via body.insertTable', { childIndex: idx });
   } else {
     paragraph.removeFromParent();
+    dbg('injectItemsTable_: fallback append to body (container unsupported)', { containerType });
     body.appendTable(table).setBorderWidth(0.5);
   }
 }
@@ -982,7 +1014,22 @@ function mirrorTrackerUrl_(customerId, trackerUrl){
 }
 
 // ============================= UTILS =============================
-function pickList_(csv, d){ const a=(csv||'').split(',').map(s=>s.trim()).filter(Boolean); return a.length?a:d; }
+function pickList_(csv, d){
+  const defaults = Array.isArray(d) ? d : [];
+  const custom = String(csv||'')
+    .split(',')
+    .map(s=>s.trim())
+    .filter(Boolean);
+  const seen = new Set();
+  const list = [];
+  custom.concat(defaults).forEach(label=>{
+    if (!seen.has(label)) {
+      seen.add(label);
+      list.push(label);
+    }
+  });
+  return list.length ? list : defaults;
+}
 function hIndex_(hdr){ const H={}; (hdr||[]).forEach((h,i)=>{ const k=String(h||'').trim(); if (k) H[k]=i+1; }); return H; }
 function pickH_(H, names){ for (const n of (names||[])) if (H[n]) return H[n]; return 0; }
 function headerMap_(hdrRow){ const m={}; hdrRow.forEach((h,i)=>{ m[String(h||'').trim()] = i+1; }); return m; }
@@ -1060,4 +1107,15 @@ function makeTable_(headers, rows, opts){
   temp.saveAndClose();
   DriveApp.getFileById(id).setTrashed(true);
   return copy;
+}
+
+function normalizeCustomerId_(id){
+  return String(id||'')
+    .replace(/\u00a0/g, ' ')
+    .trim()
+    .toUpperCase();
+}
+
+function customerIdsEqual_(a, b){
+  return normalizeCustomerId_(a) === normalizeCustomerId_(b);
 }
