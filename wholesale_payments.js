@@ -849,33 +849,46 @@ function buildItemRows_(lines, shipping){
 function injectItemsTable_(body, placeholder, rows){
   const headers = ['ITEM/SO','DESCRIPTION','QTY','TOTAL'];
   const range = body.findText(escapeForFind_(placeholder));
-  if (range) {
-    const paragraph = range.getElement().getParent().asParagraph();
-    const parent = paragraph.getParent();
-    const table = makeTable_(headers, rows, { includeHeader: false });
-    if (parent && parent.getType && parent.getType() === DocumentApp.ElementType.BODY_SECTION) {
-      const idx = body.getChildIndex(paragraph);
-      paragraph.removeFromParent();
-      const tbl = body.insertTable(idx, table);
-      tbl.setBorderWidth(0.5);
-    } else if (parent && parent.getType && parent.getType() === DocumentApp.ElementType.TABLE_CELL) {
-      const cell = parent.asTableCell();
-      const idx = cell.getChildIndex(paragraph);
-      paragraph.removeFromParent();
-      const tbl = cell.insertTable(idx, table);
-      tbl.setBorderWidth(0.5);
-    } else if (parent && typeof parent.getChildIndex === 'function' && typeof parent.insertTable === 'function') {
-      const idx = parent.getChildIndex(paragraph);
-      paragraph.removeFromParent();
-      const tbl = parent.insertTable(idx, table);
-      tbl.setBorderWidth(0.5);
-    } else {
-      paragraph.removeFromParent();
-      const tbl = body.appendTable(table);
-      tbl.setBorderWidth(0.5);
-    }
+  const table = makeTable_(headers, rows, { includeHeader: false });
+
+  if (!range) {
+    body.appendTable(table).setBorderWidth(0.5);
+    return;
+  }
+
+  let el = range.getElement();
+  while (el && el.getParent && el.getType &&
+         el.getType() !== DocumentApp.ElementType.PARAGRAPH &&
+         el.getType() !== DocumentApp.ElementType.LIST_ITEM) {
+    el = el.getParent();
+  }
+
+  if (!el || !el.getParent) {
+    body.appendTable(table).setBorderWidth(0.5);
+    return;
+  }
+
+  const paragraph = (el.getType && el.getType() === DocumentApp.ElementType.LIST_ITEM)
+    ? el.asListItem()
+    : el.asParagraph();
+  const container = paragraph.getParent();
+
+  if (container && typeof container.getChildIndex === 'function' && typeof container.insertTable === 'function') {
+    const idx = container.getChildIndex(paragraph);
+    const inserted = container.insertTable(idx, table);
+    inserted.setBorderWidth(0.5);
+    paragraph.removeFromParent();
+    return;
+  }
+
+  if (container && container.getType && container.getType() === DocumentApp.ElementType.BODY_SECTION) {
+    const idx = body.getChildIndex(paragraph);
+    const inserted = body.insertTable(idx, table);
+    inserted.setBorderWidth(0.5);
+    paragraph.removeFromParent();
   } else {
-    body.appendTable(makeTable_(headers, rows, { includeHeader: false })).setBorderWidth(0.5);
+    paragraph.removeFromParent();
+    body.appendTable(table).setBorderWidth(0.5);
   }
 }
 
