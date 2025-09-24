@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <style>
+    body { font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Arial; padding: 16px; background:#f8f9fa; }
+    h2 { margin: 0 0 12px; }
+    .box { background:#fff; border:1px solid #e5e7eb; border-radius:8px; padding:16px; margin-bottom:16px; }
+    .row { display:flex; gap:12px; margin-bottom:12px; flex-wrap:wrap; }
+    .row > label { flex:1; min-width:180px; display:flex; flex-direction:column; font-weight:600; color:#374151; }
+    input[type=text], input[type=date], select, textarea {
+      padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; background:#fff; font: inherit;
+    }
+    select:disabled, input:disabled { background:#f3f4f6; color:#6b7280; }
+    .actions { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+    .btn { background:#2563eb; border:none; color:#fff; padding:8px 16px; border-radius:6px; cursor:pointer; font-weight:600; }
+    .btn.secondary { background:#e5e7eb; color:#111827; }
+    .btn:disabled { opacity:0.6; cursor:default; }
+    .muted { color:#6b7280; font-size:12px; }
+    #statusForm.hidden, #orderInfo.hidden, #successView.hidden { display:none; }
+    #message { font-size:13px; margin-top:8px; }
+    #message.ok { color:#166534; }
+    #message.err { color:#b91c1c; }
+    .pill { display:inline-flex; align-items:center; padding:2px 8px; border-radius:999px; background:#e0e7ff; font-size:12px; color:#3730a3; margin-left:8px; }
+    .summary-list { list-style:none; margin:12px 0 0; padding:0; }
+    .summary-list li { padding:8px 0; border-bottom:1px solid #e5e7eb; }
+    .summary-list li:last-child { border-bottom:none; }
+    .summary-label { font-weight:600; color:#111827; display:block; }
+    .summary-values { font-size:13px; color:#374151; margin-top:2px; }
+    .summary-arrow { margin:0 8px; color:#9ca3af; font-size:12px; }
+  </style>
+</head>
+<body>
+  <h2>Update Client Status</h2>
+  <div id="message" class="muted" style="margin-bottom:12px;"></div>
+
+  <div id="orderInfo" class="box hidden">
+    <div><strong id="orderTitle"></strong></div>
+    <div class="muted" id="orderDetails"></div>
+  </div>
+
+  <form id="statusForm" class="box hidden">
+    <div class="row">
+      <label>Sales Stage
+        <select id="salesStage" required></select>
+      </label>
+      <label>Conversion Status
+        <select id="conversionStatus" required></select>
+      </label>
+    </div>
+    <div class="row">
+      <label>Custom Order Status
+        <select id="customOrderStatus" required></select>
+      </label>
+      <label>In Production Status
+        <select id="inProductionStatus"></select>
+      </label>
+    </div>
+    <div class="row">
+      <label>Order Date
+        <input type="date" id="orderDate">
+      </label>
+      <div style="flex:1"></div>
+    </div>
+    <div class="row">
+      <label>3D Deadline
+        <input type="date" id="threeDDeadline">
+      </label>
+      <label>Production Deadline
+        <input type="date" id="productionDeadline">
+      </label>
+    </div>
+    <div class="actions">
+      <span class="muted">All changes will write to 00_Master Wholesale and the customer tracker.</span>
+      <div style="display:flex; gap:8px;">
+        <button type="button" class="btn secondary" id="cancelBtn">Close</button>
+        <button type="submit" class="btn" id="submitBtn">Save Updates</button>
+      </div>
+    </div>
+  </form>
+
+  <div id="successView" class="box hidden">
+    <h3 style="margin:0 0 8px;">Updates Saved</h3>
+    <div><strong id="summaryTitle"></strong></div>
+    <div class="muted" id="summaryDetails" style="margin-top:4px;"></div>
+    <ul id="summaryList" class="summary-list"></ul>
+    <div class="actions" style="margin-top:16px;">
+      <div class="muted" id="summaryTracker"></div>
+      <div style="display:flex; gap:8px;">
+        <button type="button" class="btn secondary" id="successCloseBtn">Close</button>
+        <button type="button" class="btn" id="viewTrackerBtn">Open Tracker</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const $ = id => document.getElementById(id);
+    let BOOT = null;
+    let CURRENT = null;
+    let LAST_RESULT = null;
+
+    function setMessage(text, type) {
+      const el = $('message');
+      el.textContent = text || '';
+      el.className = 'muted';
+      if (text && type) {
+        el.className += ' ' + type;
+      } else if (!text) {
+        el.className = 'muted';
+      }
+    }
+
+    function fillSelectOptions(select, options, currentValue) {
+      if (!select) return;
+      const seen = new Set();
+      select.innerHTML = '';
+      (options || []).forEach(opt => {
+        if (!opt || seen.has(opt)) return;
+        seen.add(opt);
+        const o = document.createElement('option');
+        o.value = opt;
+        o.textContent = opt;
+        select.appendChild(o);
+      });
+      if (currentValue && !seen.has(currentValue)) {
+        const o = document.createElement('option');
+        o.value = currentValue;
+        o.textContent = currentValue;
+        select.appendChild(o);
+      }
+      if (currentValue) select.value = currentValue;
+    }
+
+    function resetForm() {
+      CURRENT = null;
+      LAST_RESULT = null;
+      $('orderInfo').classList.add('hidden');
+      $('statusForm').classList.add('hidden');
+      $('successView').classList.add('hidden');
+      setMessage('', '');
+      $('orderTitle').textContent = '';
+      $('orderDetails').textContent = '';
+      $('statusForm').reset();
+    }
+
+    function loadBootstrap() {
+      setMessage('Loading…', '');
+      google.script.run.withSuccessHandler(data => {
+        BOOT = data || {};
+        if (BOOT.prefill) {
+          populateForm(BOOT.prefill);
+        } else if (BOOT.prefillError) {
+          resetForm();
+          setMessage(BOOT.prefillError, 'err');
+        } else {
+          resetForm();
+          setMessage('Select a row in 00_Master Wholesale before opening this dialog.', 'err');
+        }
+      }).withFailureHandler(err => {
+        resetForm();
+        setMessage(err && err.message ? err.message : 'Failed to load options.', 'err');
+      }).admStatusUpdateBootstrap();
+    }
+
+    function populateForm(payload) {
+      if (!payload) return;
+      CURRENT = payload;
+      $('orderInfo').classList.remove('hidden');
+      const title = payload.soDisplay || (payload.row ? `Row ${payload.row}` : 'Selected Order');
+      $('orderTitle').textContent = title;
+      const details = [];
+      if (payload.customerName) details.push(payload.customerName);
+      if (payload.product) details.push(payload.product);
+      $('orderDetails').textContent = details.join(' • ');
+
+      const opts = (BOOT && BOOT.options) || {};
+      fillSelectOptions($('salesStage'), opts.salesStage, payload.statuses.salesStage || '');
+      fillSelectOptions($('conversionStatus'), opts.conversionStatus, payload.statuses.conversionStatus || '');
+      fillSelectOptions($('customOrderStatus'), opts.customOrderStatus, payload.statuses.customOrderStatus || '');
+      fillSelectOptions($('inProductionStatus'), opts.inProductionStatus, payload.statuses.inProductionStatus || '');
+
+      $('orderDate').value = payload.dates.orderDate || '';
+      $('threeDDeadline').value = payload.dates.threeDDeadline || '';
+      $('productionDeadline').value = payload.dates.productionDeadline || '';
+
+      $('statusForm').classList.remove('hidden');
+      setMessage('Status loaded. Update fields and click Save.', 'ok');
+    }
+
+    function renderSummaryList(changes) {
+      const list = $('summaryList');
+      list.innerHTML = '';
+      if (!changes || !changes.length) {
+        const li = document.createElement('li');
+        li.className = 'muted';
+        li.textContent = 'No fields were changed.';
+        list.appendChild(li);
+        return;
+      }
+      changes.forEach(item => {
+        const li = document.createElement('li');
+        const label = document.createElement('span');
+        label.className = 'summary-label';
+        label.textContent = item.label;
+        const values = document.createElement('div');
+        values.className = 'summary-values';
+        const from = document.createElement('span');
+        from.textContent = item.from || '—';
+        const arrow = document.createElement('span');
+        arrow.className = 'summary-arrow';
+        arrow.textContent = '→';
+        const to = document.createElement('span');
+        to.textContent = item.to || '—';
+        values.appendChild(from);
+        values.appendChild(arrow);
+        values.appendChild(to);
+        li.appendChild(label);
+        li.appendChild(values);
+        list.appendChild(li);
+      });
+    }
+
+    function showSuccess(res) {
+      LAST_RESULT = res || null;
+      $('statusForm').classList.add('hidden');
+      $('orderInfo').classList.add('hidden');
+      const summary = res && res.summary ? res.summary : null;
+      $('summaryTitle').textContent = summary && summary.title ? summary.title : 'Selected Order';
+      const detailText = summary && summary.details && summary.details.length ? summary.details.join(' • ') : '';
+      $('summaryDetails').textContent = detailText;
+      renderSummaryList(summary && summary.changes ? summary.changes : []);
+      const trackerMsg = res && res.sheetName ? `Tracker tab updated: ${res.sheetName}` : '';
+      $('summaryTracker').textContent = trackerMsg;
+      const trackerBtn = $('viewTrackerBtn');
+      if (res && res.trackerUrl) {
+        trackerBtn.disabled = false;
+      } else {
+        trackerBtn.disabled = true;
+      }
+      $('successView').classList.remove('hidden');
+      setMessage('Statuses updated successfully. Review the summary below.', 'ok');
+    }
+
+    function submitForm(evt) {
+      evt.preventDefault();
+      if (!CURRENT) {
+        setMessage('Select an order before saving.', 'err');
+        return;
+      }
+      const payload = {
+        row: CURRENT.row,
+        salesStage: $('salesStage').value,
+        conversionStatus: $('conversionStatus').value,
+        customOrderStatus: $('customOrderStatus').value,
+        inProductionStatus: $('inProductionStatus').value,
+        orderDate: $('orderDate').value,
+        threeDDeadline: $('threeDDeadline').value,
+        productionDeadline: $('productionDeadline').value
+      };
+      $('submitBtn').disabled = true;
+      setMessage('Saving…', '');
+      google.script.run.withSuccessHandler(res => {
+        $('submitBtn').disabled = false;
+        showSuccess(res);
+        if (res && res.trackerUrl) {
+          try { window.open(res.trackerUrl, '_blank'); } catch (_) {}
+        }
+      }).withFailureHandler(err => {
+        $('submitBtn').disabled = false;
+        const msg = err && err.message ? err.message : 'Failed to save updates.';
+        setMessage(msg, 'err');
+      }).admSubmitStatusUpdate(payload);
+    }
+
+    $('cancelBtn').addEventListener('click', e => {
+      e.preventDefault();
+      google.script.host.close();
+    });
+
+    $('successCloseBtn').addEventListener('click', e => {
+      e.preventDefault();
+      google.script.host.close();
+    });
+
+    $('viewTrackerBtn').addEventListener('click', e => {
+      e.preventDefault();
+      if (LAST_RESULT && LAST_RESULT.trackerUrl) {
+        try { window.open(LAST_RESULT.trackerUrl, '_blank'); } catch (_) {}
+      }
+    });
+
+    $('statusForm').addEventListener('submit', submitForm);
+    resetForm();
+    loadBootstrap();
+  </script>
+</body>
+</html>
