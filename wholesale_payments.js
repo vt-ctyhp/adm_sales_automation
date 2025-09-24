@@ -872,25 +872,161 @@ function wh_applyReceiptToOrders_(allocMap){
       if (debugging) {
         const cellDiagnostics = [];
         try {
-          const seen = {};
-          (touchLog||[]).forEach(rowInfo => {
-            (rowInfo.updates||[]).forEach(update => {
-              const key = rowInfo.rowIndex + ':' + update.columnIndex;
-              if (seen[key]) return;
-              seen[key] = true;
-              const cell = sh.getRange(rowInfo.rowIndex, update.columnIndex);
-              const formula = cell.getFormula();
-              cellDiagnostics.push({
+          const rowMap = new Map();
+          (touchLog || []).forEach(rowInfo => {
+            if (!rowInfo || typeof rowInfo.rowIndex !== 'number') return;
+            const key = rowInfo.rowIndex;
+            if (!rowMap.has(key)) {
+              rowMap.set(key, {
                 rowIndex: rowInfo.rowIndex,
-                columnIndex: update.columnIndex,
-                columnName: update.columnName,
-                formula: formula || null,
-                hasFormula: !!formula,
-                isBlank: cell.isBlank(),
-                note: cell.getNote() || null
+                so: rowInfo.so || null,
+                updates: (rowInfo.updates || []).slice()
               });
-            });
+            } else {
+              const existing = rowMap.get(key);
+              existing.updates = existing.updates.concat(rowInfo.updates || []);
+            }
           });
+
+          const rowsToInspect = Array.from(rowMap.values()).sort((a, b) => a.rowIndex - b.rowIndex);
+
+          let protectionList = [];
+          let protectionListError = null;
+          try {
+            if (typeof sh.getProtections === 'function' && typeof SpreadsheetApp !== 'undefined' && SpreadsheetApp.ProtectionType) {
+              protectionList = sh.getProtections(SpreadsheetApp.ProtectionType.RANGE) || [];
+            }
+          } catch (protErr) {
+            protectionListError = protErr && protErr.message;
+            protectionList = [];
+          }
+
+          const protectionInfoForCell = (rowIndex, columnIndex) => {
+            const info = {
+              hasProtection: false,
+              protectionBlocksEdit: false
+            };
+            if (!Array.isArray(protectionList) || !protectionList.length) return info;
+            for (let i = 0; i < protectionList.length; i++) {
+              const protection = protectionList[i];
+              if (!protection) continue;
+              try {
+                const pRange = protection.getRange && protection.getRange();
+                if (!pRange) continue;
+                const startRow = pRange.getRow();
+                const startCol = pRange.getColumn();
+                const endRow = startRow + pRange.getNumRows() - 1;
+                const endCol = startCol + pRange.getNumColumns() - 1;
+                if (rowIndex < startRow || rowIndex > endRow || columnIndex < startCol || columnIndex > endCol) continue;
+
+                const warningOnly = typeof protection.isWarningOnly === 'function' ? protection.isWarningOnly() : false;
+                const canEdit = typeof protection.canEdit === 'function' ? protection.canEdit() : true;
+                info.hasProtection = true;
+                info.warningOnly = warningOnly;
+                info.canEdit = canEdit;
+                info.protectionBlocksEdit = !warningOnly && !canEdit;
+                if (typeof protection.getDescription === 'function') {
+                  const desc = protection.getDescription();
+                  if (desc) info.description = desc;
+                }
+                return info;
+              } catch (protCheckErr) {
+                info.hasProtection = true;
+                info.protectionBlocksEdit = true;
+                info.error = protCheckErr && protCheckErr.message;
+                return info;
+              }
+            }
+            return info;
+          };
+
+          rowsToInspect.forEach(rowInfo => {
+            const updatedCols = new Set();
+            (rowInfo.updates || []).forEach(update => {
+              if (update && typeof update.columnIndex === 'number') updatedCols.add(update.columnIndex);
+            });
+
+            const rowDiag = {
+              rowIndex: rowInfo.rowIndex,
+              so: rowInfo.so || null,
+              columns: []
+            };
+
+            for (let col = 1; col <= lc; col++) {
+              const columnName = hdr[col - 1] || ('Col' + col);
+              const cell = sh.getRange(rowInfo.rowIndex, col);
+
+              let formula = null;
+              let hasFormula = false;
+              let formulaError = null;
+              try {
+                const f = cell.getFormula();
+                if (f) {
+                  formula = f;
+                  hasFormula = true;
+                }
+              } catch (formulaErr) {
+                formulaError = formulaErr && formulaErr.message;
+              }
+
+              let dataSourceFormula = null;
+              let hasDataSourceFormula = false;
+              let dataSourceFormulaError = null;
+              try {
+                const dsf = cell.getDataSourceFormula();
+                if (dsf) {
+                  dataSourceFormula = dsf;
+                  hasDataSourceFormula = true;
+                }
+              } catch (dsErr) {
+                dataSourceFormulaError = dsErr && dsErr.message;
+              }
+
+              let isBlank = null;
+              try {
+                isBlank = cell.isBlank();
+              } catch (blankErr) {
+                isBlank = null;
+              }
+
+              let note = null;
+              try {
+                note = cell.getNote() || null;
+              } catch (noteErr) {
+                note = null;
+              }
+
+              const protectionDetails = protectionInfoForCell(rowInfo.rowIndex, col);
+
+              const columnDiag = {
+                columnIndex: col,
+                columnName,
+                wasUpdated: updatedCols.has(col),
+                hasFormula,
+                formula: formula || null,
+                hasDataSourceFormula,
+                dataSourceFormula: dataSourceFormula || null,
+                isBlank,
+                note,
+                protection: protectionDetails
+              };
+
+              if (formulaError) columnDiag.formulaError = formulaError;
+              if (dataSourceFormulaError) columnDiag.dataSourceFormulaError = dataSourceFormulaError;
+
+              rowDiag.columns.push(columnDiag);
+            }
+
+            cellDiagnostics.push(rowDiag);
+          });
+
+          if (!cellDiagnostics.length && (touchLog || []).length) {
+            cellDiagnostics.push({ warning: 'touchLog had entries but no diagnostics rows were produced' });
+          }
+
+          if (protectionListError) {
+            cellDiagnostics.push({ protectionError: protectionListError });
+          }
         } catch (inner){
           cellDiagnostics.push({ error: 'cell diagnostics failed', message: inner && inner.message });
         }
