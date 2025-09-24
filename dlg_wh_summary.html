@@ -37,7 +37,8 @@
     table.docs th { text-align:left; font-weight:600; color:#374151; font-size:12px; text-transform:uppercase; padding-bottom:8px; border-bottom:1px solid #e5e7eb; }
     table.docs td { padding:8px 0; border-bottom:1px solid #f3f4f6; vertical-align:top; }
     table.docs tr:last-child td { border-bottom:none; }
-    table.docs td.numeric { text-align:right; font-variant-numeric:tabular-nums; }
+    table.docs td.center, table.docs th.center { text-align:center; }
+    table.docs td.center { font-variant-numeric:tabular-nums; }
     table.docs tbody tr.overdue td { background:#fef2f2; color:#b91c1c; }
     table.docs tbody tr.overdue td a { color:#b91c1c; }
     .group-warnings { margin-top:12px; background:#fffbeb; border:1px solid #fcd34d; border-radius:8px; padding:12px; color:#92400e; font-size:12px; }
@@ -164,8 +165,8 @@ function render(res){
             <td>${safe(doc.docNumber || '')}</td>
             <td>${safe(doc.docStatus || '')}</td>
             <td>${safe(doc.dueDateDisplay || '')}</td>
-            <td class="numeric">${safe(formatCurrency(doc.amount))}</td>
-            <td>${safe(doc.method || '')}</td>
+            <td class="center">${safe(formatCurrency(doc.amount))}</td>
+            <td class="center">${safe(doc.method || '')}</td>
             <td>${doc.pdfUrl ? `<a href="${safe(doc.pdfUrl)}" target="_blank">PDF</a>` : ''}</td>
           </tr>`;
       }).join('');
@@ -187,8 +188,8 @@ function render(res){
                   <th>Number</th>
                   <th>Status</th>
                   <th>Due</th>
-                  <th class="numeric">Amount</th>
-                  <th>Method</th>
+                  <th class="center">Amount</th>
+                  <th class="center">Method</th>
                   <th>Links</th>
                 </tr>
               </thead>
@@ -217,8 +218,8 @@ function render(res){
           <td>${safe(doc.docNumber || '')}</td>
           <td>${safe(doc.docStatus || '')}</td>
           <td>${safe(doc.dueDateDisplay || '')}</td>
-          <td class="numeric">${safe(formatCurrency(doc.amount))}</td>
-          <td>${safe(doc.method || '')}</td>
+          <td class="center">${safe(formatCurrency(doc.amount))}</td>
+          <td class="center">${safe(doc.method || '')}</td>
           <td>${doc.pdfUrl ? `<a href="${safe(doc.pdfUrl)}" target="_blank">PDF</a>` : ''}</td>
         </tr>`;
     }).join('') : `<tr><td colspan="8" class="hint">No documents in this group.</td></tr>`;
@@ -253,8 +254,8 @@ function render(res){
                 <th>Number</th>
                 <th>Status</th>
                 <th>Due</th>
-                <th class="numeric">Amount</th>
-                <th>Method</th>
+                <th class="center">Amount</th>
+                <th class="center">Method</th>
                 <th>Links</th>
               </tr>
             </thead>
