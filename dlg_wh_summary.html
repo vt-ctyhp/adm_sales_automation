@@ -4,57 +4,195 @@
   <base target="_top">
   <meta charset="utf-8">
   <style>
-    body { font: 13px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Arial; margin:0; padding:16px; background:#f3f4f6; color:#111827; }
-    h2 { margin: 0 0 16px; font-size:20px; font-weight:700; }
-    .row { display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; margin-bottom:16px; }
-    label { display:block; font-weight:600; color:#374151; margin-bottom:4px; font-size:12px; letter-spacing:0.01em; text-transform:uppercase; }
-    input[type=text], select { padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; min-width:140px; font-size:13px; }
-    input[type=text]:focus, select:focus { outline:none; border-color:#2563eb; box-shadow:0 0 0 3px rgba(37,99,235,0.15); }
-    button { padding:9px 16px; border:none; border-radius:6px; background:#2563eb; color:#fff; font-weight:600; cursor:pointer; }
-    button:hover { background:#1d4ed8; }
-    #out { display:flex; flex-direction:column; gap:16px; }
-    .hint { color:#6b7280; font-style:italic; }
-    .card { background:#fff; border-radius:10px; border:1px solid #e5e7eb; box-shadow:0 8px 16px -12px rgba(15,23,42,0.45); }
-    .totals { display:flex; flex-wrap:wrap; gap:12px; padding:16px; }
-    .totals span { font-weight:600; }
-    .totals .label { font-weight:500; color:#6b7280; margin-right:4px; }
-    .totals .balance.negative { color:#b91c1c; }
-    .totals .balance.positive { color:#047857; }
-    .warnings { background:#fffbeb; border:1px solid #fcd34d; border-radius:10px; padding:16px; color:#92400e; }
-    .warnings strong { display:block; font-size:14px; margin-bottom:8px; }
-    .warnings ul { margin:0; padding-left:18px; }
-    details.group { background:#fff; border-radius:10px; border:1px solid #e5e7eb; overflow:hidden; }
-    details.group + details.group { margin-top:8px; }
-    summary { list-style:none; cursor:pointer; padding:14px 16px; display:flex; flex-wrap:wrap; gap:12px; align-items:center; background:#f9fafb; font-weight:600; }
+    :root { color-scheme: light; }
+    body {
+      font: 13px/1.5 "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      margin: 0;
+      padding: 24px;
+      background: #f1f5f9;
+      color: #0f172a;
+    }
+    h2 {
+      margin: 0 0 20px;
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.015em;
+    }
+    .row { display:flex; flex-wrap:wrap; gap:12px; }
+    label {
+      display:block;
+      font-weight:600;
+      color:#475569;
+      margin-bottom:4px;
+      font-size:11px;
+      text-transform:uppercase;
+      letter-spacing:0.06em;
+    }
+    input[type=text], select {
+      padding:10px 12px;
+      border:1px solid #cbd5f5;
+      border-radius:10px;
+      min-width:150px;
+      font-size:13px;
+      background:#fff;
+      transition:border-color .2s ease, box-shadow .2s ease;
+    }
+    input[type=text]:focus, select:focus {
+      outline:none;
+      border-color:#2563eb;
+      box-shadow:0 0 0 3px rgba(37,99,235,0.18);
+    }
+    button {
+      padding:10px 18px;
+      border:none;
+      border-radius:10px;
+      background:linear-gradient(135deg,#2563eb,#1d4ed8);
+      color:#fff;
+      font-weight:600;
+      cursor:pointer;
+      box-shadow:0 10px 20px -12px rgba(37,99,235,0.8);
+      transition:transform .15s ease, box-shadow .15s ease;
+    }
+    button:hover {
+      transform:translateY(-1px);
+      box-shadow:0 16px 30px -18px rgba(37,99,235,0.85);
+    }
+    .toolbar {
+      background:#fff;
+      border-radius:16px;
+      padding:18px 22px;
+      border:1px solid #e2e8f0;
+      box-shadow:0 20px 35px -28px rgba(15,23,42,0.55);
+      align-items:flex-end;
+      margin-bottom:20px;
+    }
+    .toolbar > div { min-width:160px; }
+    #out { display:flex; flex-direction:column; gap:18px; }
+    .hint { color:#64748b; font-style:italic; }
+    .card {
+      background:#fff;
+      border-radius:16px;
+      border:1px solid #e2e8f0;
+      box-shadow:0 22px 45px -34px rgba(15,23,42,0.6);
+    }
+    .card.hero { padding:22px 24px; }
+    .hero-grid {
+      display:grid;
+      gap:20px;
+      grid-template-columns:minmax(0,2.2fr) repeat(3, minmax(0,1fr));
+      align-items:flex-start;
+    }
+    .hero-label {
+      font-size:11px;
+      font-weight:600;
+      letter-spacing:0.08em;
+      text-transform:uppercase;
+      color:#64748b;
+      margin-bottom:6px;
+    }
+    .hero-value {
+      font-size:20px;
+      font-weight:700;
+      color:#0f172a;
+      letter-spacing:-0.01em;
+    }
+    .hero-chips, .hero-meta-block .meta-values { display:flex; flex-wrap:wrap; gap:8px; }
+    .hero-meta { margin-top:6px; color:#475569; font-size:12px; }
+    .hero-meta.emphasis { font-weight:600; }
+    .hero-meta.danger { color:#b91c1c; }
+    .hero-meta-block { display:flex; flex-direction:column; gap:6px; }
+    .hero-meta-block + .hero-meta-block { margin-top:10px; }
+    .meta-label {
+      font-size:11px;
+      text-transform:uppercase;
+      letter-spacing:0.08em;
+      color:#64748b;
+    }
+    .meta-note { font-size:12px; color:#475569; }
+    .meta-note.danger { color:#b91c1c; font-weight:600; }
+    .chip {
+      display:inline-flex;
+      align-items:center;
+      padding:4px 10px;
+      border-radius:999px;
+      font-size:11px;
+      font-weight:600;
+      text-transform:uppercase;
+      letter-spacing:0.05em;
+      background:#e2e8f0;
+      color:#475569;
+    }
+    .chip.muted { background:#f1f5f9; color:#94a3b8; }
+    .chip.subtle { background:#e0f2fe; color:#075985; }
+    .chip.success { background:#dcfce7; color:#166534; }
+    .chip.danger { background:#fee2e2; color:#b91c1c; }
+    .chip.total { font-size:12px; letter-spacing:0.04em; }
+    .chip.total.negative { background:#fee2e2; color:#b91c1c; }
+    .chip.total.positive { background:#dcfce7; color:#166534; }
+    .chip.due { background:#ede9fe; color:#5b21b6; }
+    .stats-card { padding:20px 22px; }
+    .stats-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:18px; }
+    .stat { display:flex; flex-direction:column; gap:6px; }
+    .stat-label { font-size:11px; letter-spacing:0.08em; text-transform:uppercase; color:#64748b; font-weight:600; }
+    .stat-value { font-size:18px; font-weight:700; letter-spacing:-0.01em; color:#0f172a; }
+    .stat.highlight .stat-value { font-size:20px; }
+    .stat-value.negative { color:#b91c1c; }
+    .stat-value.positive { color:#047857; }
+    .warnings { border-radius:16px; padding:20px 22px; background:#fffbeb; border:1px solid #fcd34d; color:#92400e; }
+    .warnings-title { font-size:14px; font-weight:700; margin-bottom:10px; letter-spacing:0.02em; }
+    .warnings ul { margin:0; padding-left:20px; font-size:13px; }
+    details.group { background:#fff; border-radius:16px; border:1px solid #e2e8f0; overflow:hidden; box-shadow:0 18px 40px -32px rgba(15,23,42,0.55); }
+    details.group + details.group { margin-top:10px; }
+    summary { list-style:none; cursor:pointer; padding:20px 22px; display:flex; flex-direction:column; gap:16px; background:#f8fafc; }
     summary::-webkit-details-marker { display:none; }
-    .group-title { font-size:15px; font-weight:700; color:#111827; }
-    .group-meta { color:#4b5563; font-weight:500; }
-    .spacer { flex:1 1 auto; }
-    .badge { display:inline-flex; align-items:center; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; }
-    .badge.overdue { background:#fee2e2; color:#b91c1c; }
-    .group-body { padding:0 16px 16px; }
-    table.docs { width:100%; border-collapse:collapse; margin-top:12px; }
-    table.docs th { text-align:left; font-weight:600; color:#374151; font-size:12px; text-transform:uppercase; padding-bottom:8px; border-bottom:1px solid #e5e7eb; }
-    table.docs td { padding:8px 0; border-bottom:1px solid #f3f4f6; vertical-align:top; }
+    @media (min-width: 820px) {
+      summary { flex-direction:row; align-items:center; }
+      .hero-grid { grid-template-columns:minmax(0,2fr) repeat(3,minmax(0,1fr)); }
+    }
+    .group-header { flex:1; display:flex; flex-direction:column; gap:12px; }
+    .group-heading { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+    .group-title { font-size:16px; font-weight:700; color:#0f172a; }
+    .group-badges { display:flex; flex-wrap:wrap; gap:8px; }
+    .group-meta-row { display:flex; flex-wrap:wrap; gap:18px; }
+    .group-meta-block { display:flex; flex-direction:column; gap:6px; min-width:140px; }
+    .group-body { padding:0 22px 22px; }
+    table.docs { width:100%; border-collapse:separate; border-spacing:0; margin-top:14px; }
+    table.docs th {
+      text-align:left;
+      font-weight:600;
+      color:#475569;
+      font-size:11px;
+      letter-spacing:0.08em;
+      text-transform:uppercase;
+      padding:0 12px 10px 0;
+      border-bottom:1px solid #e2e8f0;
+    }
+    table.docs td {
+      padding:10px 12px 10px 0;
+      border-bottom:1px solid #edf2f7;
+      vertical-align:top;
+      font-size:13px;
+      color:#1f2937;
+    }
     table.docs tr:last-child td { border-bottom:none; }
     table.docs td.center, table.docs th.center { text-align:center; }
     table.docs td.center { font-variant-numeric:tabular-nums; }
     table.docs tbody tr.overdue td { background:#fef2f2; color:#b91c1c; }
     table.docs tbody tr.overdue td a { color:#b91c1c; }
-    .group-warnings { margin-top:12px; background:#fffbeb; border:1px solid #fcd34d; border-radius:8px; padding:12px; color:#92400e; font-size:12px; }
-    .group-warnings ul { margin:6px 0 0 18px; padding:0; }
-    .fallback-note { background:#eef2ff; border:1px solid #c7d2fe; border-radius:8px; padding:14px; color:#312e81; font-size:12px; margin-bottom:12px; }
+    .group-warnings { margin-top:14px; background:#fffbeb; border:1px solid #fcd34d; border-radius:12px; padding:14px; color:#92400e; font-size:12px; }
+    .group-warnings ul { margin:6px 0 0 20px; padding:0; }
+    .fallback-note { background:#eef2ff; border:1px solid #c7d2fe; border-radius:12px; padding:16px; color:#312e81; font-size:12px; margin-bottom:14px; }
     .fallback-note strong { display:block; font-size:14px; margin-bottom:6px; }
-    .filters { margin-top:8px; color:#4b5563; }
-    .empty { padding:24px; text-align:center; color:#6b7280; font-style:italic; }
-    a { color:#2563eb; text-decoration:none; }
+    .filters { margin-top:8px; color:#475569; }
+    .empty { padding:26px; text-align:center; color:#6b7280; font-style:italic; }
+    a { color:#2563eb; text-decoration:none; font-weight:600; }
     a:hover { text-decoration:underline; }
   </style>
 </head>
 <body>
   <h2>Payment Summary</h2>
 
-  <div class="row">
+  <div class="row toolbar">
     <div><label>Scope</label>
       <select id="scope" onchange="refresh()">
         <option value="SO">Selected SO</option>
@@ -95,6 +233,35 @@ function formatList(items){
   return items && items.length ? items.join(', ') : '—';
 }
 
+function renderChipList(values, extraClass){
+  const className = extraClass ? `chip ${extraClass}` : 'chip';
+  if (!values) return `<span class="${extraClass ? `chip ${extraClass}` : 'chip muted'}">—</span>`;
+  const arr = Array.isArray(values) ? values : [values];
+  const chips = arr.map(value => {
+    const text = safe(value);
+    if (!text) return '';
+    return `<span class="${className}">${text}</span>`;
+  }).filter(Boolean);
+  if (chips.length) return chips.join('');
+  return `<span class="${extraClass ? `chip ${extraClass}` : 'chip muted'}">—</span>`;
+}
+
+function formatRelativeDue(iso){
+  if (!iso) return '';
+  const due = new Date(iso);
+  if (!(due instanceof Date) || Number.isNaN(due.getTime())) return '';
+  const today = new Date();
+  const dueMid = new Date(due.getFullYear(), due.getMonth(), due.getDate());
+  const todayMid = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const diffDays = Math.round((dueMid - todayMid) / 86400000);
+  if (diffDays === 0) return 'Due today';
+  if (diffDays === 1) return 'Due tomorrow';
+  if (diffDays === -1) return '1 day overdue';
+  if (diffDays < 0) return `${Math.abs(diffDays)} days overdue`;
+  if (diffDays === 2) return 'Due in 2 days';
+  return `Due in ${diffDays} days`;
+}
+
 function refresh(){
   google.script.run.withSuccessHandler(render).wh_getSummary({
     scope: $('#scope').value,
@@ -129,27 +296,110 @@ function render(res){
   console.debug('[ADM_DEBUG] summary ->', res);
   const groups = asArray(res && res.groups);
   const totals = res && res.totals || {};
-  const totalsHtml = `
-    <div class="card">
-      <div class="totals">
-        <span><span class="label">Invoiced:</span>${formatCurrency(totals.invoiced)}</span>
-        <span><span class="label">Receipts:</span>${formatCurrency(totals.receipts)}</span>
-        <span><span class="label">Credits Applied:</span>${formatCurrency(totals.creditsApplied)}</span>
-        <span><span class="label">Credits Issued:</span>${formatCurrency(totals.creditsIssued)}</span>
-        <span><span class="label">Outstanding:</span><span class="balance ${totals.balance > 0 ? 'negative' : 'positive'}">${formatCurrency(totals.balance)}</span></span>
+  const warnings = asArray(res && res.warnings);
+  const meta = res && res.meta || {};
+  const filters = meta && meta.filters || {};
+  const summary = meta && meta.summary || {};
+  const docsFallback = asArray(res && res.docs);
+
+  const businessNames = Array.isArray(summary.businessNames) && summary.businessNames.length
+    ? summary.businessNames
+    : [];
+  const primaryBusiness = businessNames[0] || '';
+  const extraBusinesses = businessNames.slice(1);
+  const soNumbers = (Array.isArray(summary.soNumbers) && summary.soNumbers.length
+    ? summary.soNumbers
+    : (filters.soNumber ? [filters.soNumber] : [])).filter(Boolean);
+  const invoiceGroupIds = (Array.isArray(summary.invoiceGroupIds) && summary.invoiceGroupIds.length
+    ? summary.invoiceGroupIds
+    : (filters.invoiceGroupId ? [filters.invoiceGroupId] : [])).filter(Boolean);
+  const customerIds = (Array.isArray(summary.customerIds) && summary.customerIds.length
+    ? summary.customerIds
+    : (filters.customerId ? [filters.customerId] : [])).filter(Boolean);
+  const scopeLabel = String(filters.scope || summary.scope || 'SO').toUpperCase();
+
+  const outstandingBalance = typeof totals.balance === 'number' && isFinite(totals.balance) ? totals.balance : NaN;
+  const outstandingDisplay = formatCurrency(totals.balance) || '—';
+  const outstandingValueClass = Number.isFinite(outstandingBalance) ? (outstandingBalance > 0 ? 'negative' : 'positive') : '';
+  const dueDisplay = summary.nearestDueDateDisplay || '';
+  const dueRelative = formatRelativeDue(summary.nearestDueDateIso);
+  const overdueCount = Number(summary.overdueGroupCount || 0);
+  const overdueText = overdueCount ? `${overdueCount} overdue group${overdueCount === 1 ? '' : 's'}` : 'All current';
+  const overdueChipClass = overdueCount ? 'chip danger' : 'chip success';
+  const dueMeta = dueRelative
+    ? `<div class="hero-meta ${overdueCount ? 'danger' : 'emphasis'}">${safe(dueRelative)}</div>`
+    : (dueDisplay ? '' : '<div class="hero-meta">No due dates</div>');
+
+  const groupCount = Number(summary.totalGroups || groups.length || 0);
+  const docCount = Number(summary.totalDocuments || docsFallback.length || 0);
+
+  const heroHtml = `
+    <div class="card hero">
+      <div class="hero-grid">
+        <div>
+          <div class="hero-label">Business Name</div>
+          <div class="hero-value">${primaryBusiness ? safe(primaryBusiness) : '—'}</div>
+          ${extraBusinesses.length ? `<div class="hero-chips">${renderChipList(extraBusinesses, 'subtle')}</div>` : ''}
+        </div>
+        <div>
+          <div class="hero-label">Customer ID</div>
+          <div class="hero-chips">${renderChipList(customerIds, 'subtle')}</div>
+        </div>
+        <div>
+          <div class="hero-label">Scope</div>
+          <div class="hero-value">${safe(scopeLabel)}</div>
+          <div class="hero-meta-block">
+            <span class="meta-label">Sales Orders</span>
+            <div class="meta-values">${renderChipList(soNumbers, 'subtle')}</div>
+          </div>
+          <div class="hero-meta-block">
+            <span class="meta-label">Invoice Groups</span>
+            <div class="meta-values">${renderChipList(invoiceGroupIds, 'subtle')}</div>
+          </div>
+        </div>
+        <div>
+          <div class="hero-label">Nearest Due</div>
+          <div class="hero-value">${dueDisplay ? safe(dueDisplay) : '—'}</div>
+          ${dueMeta}
+          <div class="hero-meta-block">
+            <span class="meta-label">Status</span>
+            <div class="meta-values"><span class="${overdueChipClass}">${safe(overdueText)}</span></div>
+          </div>
+          <div class="hero-meta-block">
+            <span class="meta-label">Records</span>
+            <div class="meta-values">
+              <span class="chip subtle">${safe(`${groupCount} group${groupCount === 1 ? '' : 's'}`)}</span>
+              <span class="chip subtle">${safe(`${docCount} document${docCount === 1 ? '' : 's'}`)}</span>
+            </div>
+          </div>
+        </div>
       </div>
     </div>`;
 
-  const warnings = asArray(res && res.warnings);
+  const stats = [
+    { label: 'Invoiced', value: formatCurrency(totals.invoiced) || '—' },
+    { label: 'Receipts', value: formatCurrency(totals.receipts) || '—' },
+    { label: 'Credits Applied', value: formatCurrency(totals.creditsApplied) || '—' },
+    { label: 'Credits Issued', value: formatCurrency(totals.creditsIssued) || '—' },
+    { label: 'Outstanding', value: outstandingDisplay, highlight: true, className: outstandingValueClass }
+  ];
+  const statsHtml = stats.map(stat => {
+    const highlightClass = stat.highlight ? ' highlight' : '';
+    const valueClass = ['stat-value'];
+    if (stat.className) valueClass.push(stat.className);
+    return `
+      <div class="stat${highlightClass}">
+        <div class="stat-label">${safe(stat.label)}</div>
+        <div class="${valueClass.join(' ')}">${safe(stat.value)}</div>
+      </div>`;
+  }).join('');
+  const totalsHtml = `<div class="card stats-card"><div class="stats-grid">${statsHtml}</div></div>`;
+
   const warningHtml = warnings.length ? `
-    <div class="warnings">
-      <strong>Warnings &amp; Alerts</strong>
+    <div class="card warnings">
+      <div class="warnings-title">Warnings &amp; Alerts</div>
       <ul>${warnings.map(w => `<li>${safe(w)}</li>`).join('')}</ul>
     </div>` : '';
-
-  const meta = res && res.meta || {};
-  const filters = meta && meta.filters || {};
-  const docsFallback = asArray(res && res.docs);
 
   if (!res || !groups.length) {
     $('#out').classList.remove('hint');
@@ -171,7 +421,7 @@ function render(res){
           </tr>`;
       }).join('');
 
-      $('#out').innerHTML = `${warningHtml}${totalsHtml}
+      $('#out').innerHTML = `${heroHtml}${totalsHtml}${warningHtml}
         <div class="card">
           <div class="group-body">
             <div class="fallback-note">
@@ -203,7 +453,7 @@ function render(res){
     const filterText = (filters.scope || filters.soNumber || filters.customerId || filters.invoiceGroupId)
       ? `<div class="hint">Checked scope ${safe(filters.scope || 'SO')} for SO ${safe(filters.soNumber || '—')} · Customer ${safe(filters.customerId || '—')} · Group ${safe(filters.invoiceGroupId || '—')}.</div>`
       : '';
-    $('#out').innerHTML = `<div class="card empty">No documents found for the selected scope.</div>${filterText}`;
+    $('#out').innerHTML = `${heroHtml}${totalsHtml}${warningHtml}<div class="card empty">No documents found for the selected scope.</div>${filterText}`;
     return;
   }
 
@@ -211,15 +461,18 @@ function render(res){
     const docs = asArray(group && group.docs);
     const docRows = docs.length ? docs.map(doc => {
       const rowClass = doc.isOverdue ? ' class="overdue"' : '';
+      const amount = formatCurrency(doc.amount) || '—';
+      const dueDisplay = doc.dueDateDisplay || '—';
+      const method = doc.method || '';
       return `
         <tr${rowClass}>
           <td>${safe(doc.displayDate || '')}</td>
           <td>${safe(doc.docLabel || doc.docType || '')}</td>
           <td>${safe(doc.docNumber || '')}</td>
           <td>${safe(doc.docStatus || '')}</td>
-          <td>${safe(doc.dueDateDisplay || '')}</td>
-          <td class="center">${safe(formatCurrency(doc.amount))}</td>
-          <td class="center">${safe(doc.method || '')}</td>
+          <td>${safe(dueDisplay)}</td>
+          <td class="center">${safe(amount)}</td>
+          <td class="center">${safe(method)}</td>
           <td>${doc.pdfUrl ? `<a href="${safe(doc.pdfUrl)}" target="_blank">PDF</a>` : ''}</td>
         </tr>`;
     }).join('') : `<tr><td colspan="8" class="hint">No documents in this group.</td></tr>`;
@@ -230,19 +483,55 @@ function render(res){
       : '';
 
     const badges = [];
-    if (group && group.hasOverdue) badges.push('<span class="badge overdue">Overdue</span>');
+    if (group && group.hasOverdue) badges.push('<span class="chip danger">Overdue</span>');
+
+    const invoiceGroupChip = group && group.invoiceGroupId ? `<span class="chip subtle">${safe(group.invoiceGroupId)}</span>` : '';
+    const dueChip = group && group.nextDueDateDisplay ? `<span class="chip due">${safe(group.nextDueDateDisplay)}</span>` : '<span class="chip muted">—</span>';
+    const dueNote = formatRelativeDue(group && group.nextDueDateIso) || '';
+    const receivedTotal = (group && group.totals ? (Number(group.totals.receipts || 0) + Number(group.totals.creditApplied || 0)) : 0);
+    const balanceValue = group && group.totals ? Number(group.totals.balance || 0) : 0;
+    const balanceDisplay = formatCurrency(balanceValue) || '—';
+    const balanceClass = balanceValue > 0 ? 'negative' : 'positive';
+    const creditsIssuedDisplay = formatCurrency(group && group.totals ? group.totals.creditsIssued : undefined) || '—';
+    const receivedDisplay = formatCurrency(receivedTotal) || '—';
 
     return `
       <details class="group" ${(group && group.hasOverdue) ? 'open' : ''}>
         <summary>
-          <span class="group-title">${safe(group && group.label || 'Invoice Group')}</span>
-          <span class="group-meta">SOs: ${safe(formatList(group.soNumbers || []))}</span>
-          <span class="group-meta">Due Next: ${safe(group.nextDueDateDisplay || '—')}</span>
-          <span class="spacer"></span>
-          <span class="group-meta">Invoiced: ${safe(formatCurrency(group.totals?.invoiced))}</span>
-          <span class="group-meta">Received: ${safe(formatCurrency((group.totals?.receipts || 0) + (group.totals?.creditApplied || 0)))}</span>
-          <span class="group-meta">Balance: ${safe(formatCurrency(group.totals?.balance))}</span>
-          ${badges.join('')}
+          <div class="group-header">
+            <div class="group-heading">
+              <span class="group-title">${safe(group && group.label || 'Invoice Group')}</span>
+              ${invoiceGroupChip}
+              ${badges.length ? `<span class="group-badges">${badges.join('')}</span>` : ''}
+            </div>
+            <div class="group-meta-row">
+              <div class="group-meta-block">
+                <span class="meta-label">Sales Orders</span>
+                <div class="meta-values">${renderChipList(group && group.soNumbers || [], 'subtle')}</div>
+              </div>
+              <div class="group-meta-block">
+                <span class="meta-label">Due Next</span>
+                <div class="meta-values">${dueChip}</div>
+                ${dueNote ? `<span class="meta-note ${group && group.hasOverdue ? 'danger' : ''}">${safe(dueNote)}</span>` : ''}
+              </div>
+              <div class="group-meta-block">
+                <span class="meta-label">Invoiced</span>
+                <div class="meta-values"><span class="chip subtle">${safe(formatCurrency(group && group.totals ? group.totals.invoiced : undefined) || '—')}</span></div>
+              </div>
+              <div class="group-meta-block">
+                <span class="meta-label">Received</span>
+                <div class="meta-values"><span class="chip subtle">${safe(receivedDisplay)}</span></div>
+              </div>
+              <div class="group-meta-block">
+                <span class="meta-label">Credits Issued</span>
+                <div class="meta-values"><span class="chip subtle">${safe(creditsIssuedDisplay)}</span></div>
+              </div>
+              <div class="group-meta-block">
+                <span class="meta-label">Balance</span>
+                <div class="meta-values"><span class="chip total ${balanceClass}">${safe(balanceDisplay)}</span></div>
+              </div>
+            </div>
+          </div>
         </summary>
         <div class="group-body">
           ${groupWarnings}
@@ -266,7 +555,7 @@ function render(res){
   }).join('');
 
   $('#out').classList.remove('hint');
-  $('#out').innerHTML = `${warningHtml}${totalsHtml}${groupsHtml}`;
+  $('#out').innerHTML = `${heroHtml}${totalsHtml}${warningHtml}${groupsHtml}`;
 }
 google.script.run.withSuccessHandler(({ctx})=>{
   if (ctx && ctx.soNumber) $('#so').value = ctx.soNumber;
