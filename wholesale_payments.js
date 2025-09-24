@@ -668,23 +668,71 @@ function wh_applyReceiptToOrders_(allocMap){
                 });
               });
               const rows = Array.from(rowColumnMap.keys()).sort((a,b)=>a-b);
-              const protections = (typeof sh.getProtections === 'function')
+              const rangeProtections = (typeof sh.getProtections === 'function')
                 ? sh.getProtections(SpreadsheetApp.ProtectionType.RANGE) || []
                 : [];
-              const blockingProtections = protections.filter(p => {
+              const sheetProtections = (typeof sh.getProtections === 'function')
+                ? sh.getProtections(SpreadsheetApp.ProtectionType.SHEET) || []
+                : [];
+              const blockingRangeProtections = rangeProtections.filter(p => {
                 try { return p && !p.isWarningOnly(); }
                 catch (_) { return true; }
               });
-              const intersects = (row,col) => blockingProtections.some(p => {
-                try {
-                  const rng = p.getRange();
-                  if (!rng) return false;
-                  return row >= rng.getRow() && row <= rng.getLastRow()
-                      && col >= rng.getColumn() && col <= rng.getLastColumn();
-                } catch (_) {
-                  return false;
-                }
+              const blockingSheetProtections = sheetProtections.filter(p => {
+                try { return p && !p.isWarningOnly(); }
+                catch (_) { return true; }
               });
+              const describeProtection = (prot, type) => {
+                const info = { type };
+                try {
+                  const desc = prot.getDescription();
+                  if (desc) info.description = desc;
+                } catch (_) {}
+                try {
+                  if (typeof prot.canDomainEdit === 'function') {
+                    info.domainEditable = !!prot.canDomainEdit();
+                  }
+                } catch (_) {}
+                try {
+                  if (typeof prot.getEditors === 'function') {
+                    const editors = prot.getEditors() || [];
+                    if (editors.length) {
+                      info.editors = editors.map(ed => {
+                        try {
+                          if (ed && typeof ed.getEmail === 'function') return ed.getEmail();
+                        } catch (_) {}
+                        return String(ed || '');
+                      });
+                    }
+                  }
+                } catch (_) {}
+                return info;
+              };
+              const intersectingProtections = (row,col) => {
+                const hits = [];
+                blockingRangeProtections.forEach(p => {
+                  try {
+                    const rng = p.getRange();
+                    if (!rng) return;
+                    const inRow = row >= rng.getRow() && row <= rng.getLastRow();
+                    const inCol = col >= rng.getColumn() && col <= rng.getLastColumn();
+                    if (inRow && inCol) {
+                      const info = describeProtection(p, 'RANGE');
+                      try {
+                        const rngA1 = rng.getA1Notation();
+                        if (rngA1) info.range = rngA1;
+                      } catch (_) {}
+                      hits.push(info);
+                    }
+                  } catch (_) {}
+                });
+                blockingSheetProtections.forEach(p => {
+                  try {
+                    hits.push(describeProtection(p, 'SHEET'));
+                  } catch (_) {}
+                });
+                return hits;
+              };
               return rows.map(row => {
                 const touchedCols = rowColumnMap.get(row) || new Set();
                 const rowRange = sh.getRange(row,1,1,lc);
@@ -699,15 +747,16 @@ function wh_applyReceiptToOrders_(allocMap){
                   let dataSourceError = '';
                   try { dataSourceFormula = cell.getDataSourceFormula(); }
                   catch (e) { dataSourceError = String(e && e.message ? e.message : e || ''); }
-                  const protectedCell = intersects(row,col);
+                  const protectionHits = intersectingProtections(row,col);
                   const colInfo = {
                     column: col,
                     header: hdr[col-1] || '',
                     touched: touchedCols.has(col),
                     hasFormula: !!formula,
                     hasDataSourceFormula: !!dataSourceFormula,
-                    isProtected: protectedCell
+                    isProtected: protectionHits.length > 0
                   };
+                  if (protectionHits.length) colInfo.protections = protectionHits;
                   if (formula) colInfo.formula = formula;
                   if (formulaError) colInfo.formulaError = formulaError;
                   if (dataSourceFormula) colInfo.dataSourceFormula = dataSourceFormula;
