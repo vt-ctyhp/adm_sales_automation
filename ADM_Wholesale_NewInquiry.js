@@ -820,3 +820,244 @@ function admSubmitNewInquiry(payload){
     customerSheetUrl: workbook.url || ''
   };
 }
+
+/*** === CLIENT STATUS UPDATE DIALOG === ***/
+function admOpenClientStatusDialog(){
+  const html = HtmlService.createHtmlOutputFromFile('dlg_wh_status_update')
+    .setWidth(640)
+    .setHeight(560);
+  SpreadsheetApp.getUi().showModalDialog(html, 'Update Client Status');
+}
+
+function collectColumnOptions_(label, defaults){
+  const sh = sh_(MASTER_SHEET);
+  const H = headerIndex1_(sh);
+  const col = H[label] || 0;
+  const seen = new Set();
+  const out = [];
+  (defaults || []).forEach(v => {
+    const s = String(v || '').trim();
+    if (s && !seen.has(s)) { seen.add(s); out.push(s); }
+  });
+  if (!col) return out;
+  const last = sh.getLastRow();
+  if (last < 2) return out;
+  const vals = sh.getRange(2, col, last-1, 1).getDisplayValues();
+  vals.forEach(r => {
+    const s = String((r && r[0]) || '').trim();
+    if (s && !seen.has(s)) { seen.add(s); out.push(s); }
+  });
+  return out;
+}
+
+function formatDateYMD_(val){
+  if (!val) return '';
+  if (val instanceof Date) {
+    return Utilities.formatDate(val, ADM_TZ, 'yyyy-MM-dd');
+  }
+  const s = String(val || '').trim();
+  if (!s) return '';
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) return iso[0];
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return '';
+  return Utilities.formatDate(d, ADM_TZ, 'yyyy-MM-dd');
+}
+
+function parseYMD_(ymd){
+  if (!ymd) return null;
+  const m = String(ymd || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12, 0, 0);
+}
+
+function findMasterRowBySO_(soRaw){
+  const key = soKey_(soRaw);
+  if (!key) throw new Error('Enter a valid SO number (format 12.3456).');
+  const sh = sh_(MASTER_SHEET);
+  const H = headerIndex1_(sh);
+  const col = H['SO#'] || 0;
+  if (!col) throw new Error('00_Master Wholesale is missing an "SO#" column.');
+  const last = sh.getLastRow();
+  if (last < 2) throw new Error('00_Master Wholesale has no data rows.');
+  const vals = sh.getRange(2, col, last-1, 1).getDisplayValues();
+  for (let i=0; i<vals.length; i++){
+    const cell = (vals[i] && vals[i][0]) || '';
+    if (soKey_(cell) === key) {
+      const pretty = soPretty_(cell || soRaw);
+      const display = soDisplay_(cell || soRaw);
+      return { row: i+2, key, soPretty: pretty, soDisplay: display };
+    }
+  }
+  throw new Error('SO not found: ' + soPretty_(soRaw || key));
+}
+
+function admStatusUpdateBootstrap(){
+  const options = {
+    salesStage: collectColumnOptions_('Sales Stage', ['Lead','Quotation Sent','Order Won','Order Lost','In Production']),
+    conversionStatus: collectColumnOptions_('Conversion Status', ['Quotation Requested','Quotation Sent','Converted','Lost']),
+    customOrderStatus: collectColumnOptions_('Custom Order Status', ['3D Requested','3D In Progress','3D Complete','Production','Shipped']),
+    inProductionStatus: collectColumnOptions_('In Production Status', ['Not Started','CAD','Casting','Setting','QA','Completed'])
+  };
+  return {
+    options,
+    today: Utilities.formatDate(new Date(), ADM_TZ, 'yyyy-MM-dd')
+  };
+}
+
+function extractUrlFromCell_(range){
+  try {
+    const rt = range.getRichTextValue();
+    if (rt) {
+      const direct = rt.getLinkUrl && rt.getLinkUrl();
+      if (direct) return direct;
+      if (rt.getRuns) {
+        const runs = rt.getRuns();
+        for (let i=0; i<runs.length; i++){
+          const url = runs[i].getLinkUrl && runs[i].getLinkUrl();
+          if (url) return url;
+        }
+      }
+    }
+  } catch (_) {}
+  return range.getDisplayValue();
+}
+
+function admFetchStatusForSO(soRaw){
+  const found = findMasterRowBySO_(soRaw);
+  const sh = sh_(MASTER_SHEET);
+  const H = headerIndex1_(sh);
+  function getDisplay(label){
+    return H[label] ? sh.getRange(found.row, H[label]).getDisplayValue() : '';
+  }
+  function getValue(label){
+    return H[label] ? sh.getRange(found.row, H[label]).getValue() : '';
+  }
+  const statuses = {
+    salesStage: getDisplay('Sales Stage'),
+    conversionStatus: getDisplay('Conversion Status'),
+    customOrderStatus: getDisplay('Custom Order Status'),
+    inProductionStatus: getDisplay('In Production Status')
+  };
+  const dates = {
+    orderDate: formatDateYMD_(getValue('Order Date')),
+    rdDeadline: formatDateYMD_(getValue('R&D Deadline')),
+    threeDDeadline: formatDateYMD_(getValue('3D Deadline')),
+    productionDeadline: formatDateYMD_(getValue('Production Deadline'))
+  };
+  let trackerUrl = '';
+  if (H['Customer Sheet URL']) {
+    trackerUrl = extractUrlFromCell_(sh.getRange(found.row, H['Customer Sheet URL']));
+  }
+  return {
+    ok: true,
+    soDisplay: found.soDisplay,
+    soPretty: found.soPretty,
+    statuses,
+    dates,
+    customerName: getDisplay('Customer Name'),
+    product: getDisplay('Product'),
+    trackerUrl
+  };
+}
+
+function trackerIdFromUrl_(url){
+  const m = String(url || '').match(/[-\w]{25,}/);
+  return m ? m[0] : '';
+}
+
+function updateCustomerTrackerSheet_(trackerUrl, customerName, product, soDisplay, payload){
+  const id = trackerIdFromUrl_(trackerUrl);
+  if (!id) return '';
+  const ss = SpreadsheetApp.openById(id);
+  const tabName = soDisplay || 'SO';
+  let sheet = ss.getSheetByName(tabName);
+  if (!sheet) {
+    sheet = ss.insertSheet(tabName);
+  } else {
+    sheet.clearContents();
+  }
+  const rows = [
+    ['Field','Value'],
+    ['SO Number', soDisplay || ''],
+    ['Customer', customerName || ''],
+    ['Product', product || ''],
+    ['Sales Stage', payload.salesStage || ''],
+    ['Conversion Status', payload.conversionStatus || ''],
+    ['Custom Order Status', payload.customOrderStatus || ''],
+    ['In Production Status', payload.inProductionStatus || ''],
+    ['Order Date', payload.orderDate || ''],
+    ['R&D Deadline', payload.rdDeadline || ''],
+    ['3D Deadline', payload.threeDDeadline || ''],
+    ['Production Deadline', payload.productionDeadline || '']
+  ];
+  sheet.getRange(1, 1, rows.length, rows[0].length).setValues(rows);
+  sheet.setFrozenRows(1);
+  try {
+    sheet.autoResizeColumns(1, 2);
+  } catch (_) {}
+  return tabName;
+}
+
+function admSubmitStatusUpdate(payload){
+  const stop = T('admSubmitStatusUpdate');
+  if (!payload || !payload.so) throw new Error('SO number is required.');
+  const found = findMasterRowBySO_(payload.so);
+  const sh = sh_(MASTER_SHEET);
+  const H = headerIndex1_(sh);
+  function put(label, value){
+    if (H[label]) sh.getRange(found.row, H[label]).setValue(value || '');
+  }
+  function putDate(label, ymd){
+    if (!H[label]) return;
+    const rng = sh.getRange(found.row, H[label]);
+    if (!ymd) {
+      rng.clearContent();
+      return;
+    }
+    const dt = parseYMD_(ymd);
+    if (dt) {
+      rng.setValue(dt);
+    } else {
+      rng.setValue(ymd);
+    }
+  }
+  put('Sales Stage', payload.salesStage || '');
+  put('Conversion Status', payload.conversionStatus || '');
+  put('Custom Order Status', payload.customOrderStatus || '');
+  put('In Production Status', payload.inProductionStatus || '');
+  putDate('Order Date', payload.orderDate || '');
+  putDate('R&D Deadline', payload.rdDeadline || '');
+  putDate('3D Deadline', payload.threeDDeadline || '');
+  putDate('Production Deadline', payload.productionDeadline || '');
+
+  let trackerUrl = '';
+  if (H['Customer Sheet URL']) {
+    trackerUrl = extractUrlFromCell_(sh.getRange(found.row, H['Customer Sheet URL']));
+  }
+  let sheetName = '';
+  if (trackerUrl) {
+    try {
+      sheetName = updateCustomerTrackerSheet_(
+        trackerUrl,
+        H['Customer Name'] ? sh.getRange(found.row, H['Customer Name']).getDisplayValue() : '',
+        H['Product'] ? sh.getRange(found.row, H['Product']).getDisplayValue() : '',
+        found.soDisplay,
+        {
+          salesStage: payload.salesStage || '',
+          conversionStatus: payload.conversionStatus || '',
+          customOrderStatus: payload.customOrderStatus || '',
+          inProductionStatus: payload.inProductionStatus || '',
+          orderDate: payload.orderDate || '',
+          rdDeadline: payload.rdDeadline || '',
+          threeDDeadline: payload.threeDDeadline || '',
+          productionDeadline: payload.productionDeadline || ''
+        }
+      );
+    } catch (err) {
+      console.error('[admSubmitStatusUpdate] tracker update failed:', err);
+    }
+  }
+  if (stop) stop();
+  return { ok: true, trackerUrl, sheetName };
+}

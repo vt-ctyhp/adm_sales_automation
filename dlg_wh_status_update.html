@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <style>
+    body { font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Arial; padding: 16px; background:#f8f9fa; }
+    h2 { margin: 0 0 12px; }
+    .box { background:#fff; border:1px solid #e5e7eb; border-radius:8px; padding:16px; margin-bottom:16px; }
+    .row { display:flex; gap:12px; margin-bottom:12px; flex-wrap:wrap; }
+    .row > label { flex:1; min-width:180px; display:flex; flex-direction:column; font-weight:600; color:#374151; }
+    input[type=text], input[type=date], select, textarea {
+      padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; background:#fff; font: inherit;
+    }
+    select:disabled, input:disabled { background:#f3f4f6; color:#6b7280; }
+    .actions { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+    .btn { background:#2563eb; border:none; color:#fff; padding:8px 16px; border-radius:6px; cursor:pointer; font-weight:600; }
+    .btn.secondary { background:#e5e7eb; color:#111827; }
+    .btn:disabled { opacity:0.6; cursor:default; }
+    .muted { color:#6b7280; font-size:12px; }
+    #statusForm.hidden, #orderInfo.hidden { display:none; }
+    #message { font-size:13px; margin-top:8px; }
+    #message.ok { color:#166534; }
+    #message.err { color:#b91c1c; }
+    .pill { display:inline-flex; align-items:center; padding:2px 8px; border-radius:999px; background:#e0e7ff; font-size:12px; color:#3730a3; margin-left:8px; }
+  </style>
+</head>
+<body>
+  <h2>Update Client Status</h2>
+  <div class="box">
+    <div class="row">
+      <label style="flex:2">SO Number
+        <input id="soInput" type="text" placeholder="12.3456" autocomplete="off">
+      </label>
+      <div style="display:flex; align-items:flex-end; gap:8px;">
+        <button class="btn" id="loadBtn">Load Order</button>
+        <button class="btn secondary" id="resetBtn">Reset</button>
+      </div>
+    </div>
+    <div id="message" class="muted"></div>
+  </div>
+
+  <div id="orderInfo" class="box hidden">
+    <div><strong id="orderTitle"></strong></div>
+    <div class="muted" id="orderDetails"></div>
+  </div>
+
+  <form id="statusForm" class="box hidden">
+    <div class="row">
+      <label>Sales Stage
+        <select id="salesStage" required></select>
+      </label>
+      <label>Conversion Status
+        <select id="conversionStatus" required></select>
+      </label>
+    </div>
+    <div class="row">
+      <label>Custom Order Status
+        <select id="customOrderStatus" required></select>
+      </label>
+      <label>In Production Status
+        <select id="inProductionStatus"></select>
+      </label>
+    </div>
+    <div class="row">
+      <label>Order Date
+        <input type="date" id="orderDate">
+      </label>
+      <label>R&amp;D Deadline
+        <input type="date" id="rdDeadline">
+      </label>
+    </div>
+    <div class="row">
+      <label>3D Deadline
+        <input type="date" id="threeDDeadline">
+      </label>
+      <label>Production Deadline
+        <input type="date" id="productionDeadline">
+      </label>
+    </div>
+    <div class="actions">
+      <span class="muted">All changes will write to 00_Master Wholesale and the customer tracker.</span>
+      <div style="display:flex; gap:8px;">
+        <button type="button" class="btn secondary" id="cancelBtn">Close</button>
+        <button type="submit" class="btn" id="submitBtn">Save Updates</button>
+      </div>
+    </div>
+  </form>
+
+  <script>
+    const $ = id => document.getElementById(id);
+    let BOOT = null;
+    let CURRENT = null;
+
+    function setMessage(text, type) {
+      const el = $('message');
+      el.textContent = text || '';
+      el.className = text ? ('muted ' + (type || '')) : 'muted';
+    }
+
+    function fillSelectOptions(select, options, currentValue) {
+      if (!select) return;
+      const seen = new Set();
+      select.innerHTML = '';
+      (options || []).forEach(opt => {
+        if (!opt || seen.has(opt)) return;
+        seen.add(opt);
+        const o = document.createElement('option');
+        o.value = opt;
+        o.textContent = opt;
+        select.appendChild(o);
+      });
+      if (currentValue && !seen.has(currentValue)) {
+        const o = document.createElement('option');
+        o.value = currentValue;
+        o.textContent = currentValue;
+        select.appendChild(o);
+      }
+      if (currentValue) select.value = currentValue;
+    }
+
+    function resetForm() {
+      CURRENT = null;
+      $('orderInfo').classList.add('hidden');
+      $('statusForm').classList.add('hidden');
+      setMessage('', '');
+      $('orderTitle').textContent = '';
+      $('orderDetails').textContent = '';
+      $('statusForm').reset();
+    }
+
+    function loadBootstrap() {
+      google.script.run.withSuccessHandler(data => {
+        BOOT = data || {};
+        setMessage('Enter an SO number to begin.', '');
+      }).withFailureHandler(err => {
+        setMessage(err && err.message ? err.message : 'Failed to load options.', 'err');
+      }).admStatusUpdateBootstrap();
+    }
+
+    function populateForm(payload) {
+      if (!payload) return;
+      CURRENT = payload;
+      $('orderInfo').classList.remove('hidden');
+      $('orderTitle').textContent = payload.soDisplay || '';
+      const details = [];
+      if (payload.customerName) details.push(payload.customerName);
+      if (payload.product) details.push(payload.product);
+      $('orderDetails').textContent = details.join(' • ');
+
+      const opts = (BOOT && BOOT.options) || {};
+      fillSelectOptions($('salesStage'), opts.salesStage, payload.statuses.salesStage || '');
+      fillSelectOptions($('conversionStatus'), opts.conversionStatus, payload.statuses.conversionStatus || '');
+      fillSelectOptions($('customOrderStatus'), opts.customOrderStatus, payload.statuses.customOrderStatus || '');
+      fillSelectOptions($('inProductionStatus'), opts.inProductionStatus, payload.statuses.inProductionStatus || '');
+
+      $('orderDate').value = payload.dates.orderDate || '';
+      $('rdDeadline').value = payload.dates.rdDeadline || '';
+      $('threeDDeadline').value = payload.dates.threeDDeadline || '';
+      $('productionDeadline').value = payload.dates.productionDeadline || '';
+
+      $('statusForm').classList.remove('hidden');
+      setMessage('Status loaded. Update fields and click Save.', 'ok');
+    }
+
+    function loadOrder() {
+      const so = $('soInput').value.trim();
+      if (!so) {
+        setMessage('Enter an SO number first.', 'err');
+        return;
+      }
+      setMessage('Loading…', '');
+      $('statusForm').classList.add('hidden');
+      $('orderInfo').classList.add('hidden');
+      google.script.run.withSuccessHandler(res => {
+        populateForm(res);
+      }).withFailureHandler(err => {
+        resetForm();
+        const msg = err && err.message ? err.message : 'Could not locate that SO.';
+        setMessage(msg, 'err');
+      }).admFetchStatusForSO(so);
+    }
+
+    function submitForm(evt) {
+      evt.preventDefault();
+      if (!CURRENT) {
+        setMessage('Load an SO before saving.', 'err');
+        return;
+      }
+      const payload = {
+        so: CURRENT.soDisplay || $('soInput').value.trim(),
+        salesStage: $('salesStage').value,
+        conversionStatus: $('conversionStatus').value,
+        customOrderStatus: $('customOrderStatus').value,
+        inProductionStatus: $('inProductionStatus').value,
+        orderDate: $('orderDate').value,
+        rdDeadline: $('rdDeadline').value,
+        threeDDeadline: $('threeDDeadline').value,
+        productionDeadline: $('productionDeadline').value
+      };
+      $('submitBtn').disabled = true;
+      setMessage('Saving…', '');
+      google.script.run.withSuccessHandler(res => {
+        $('submitBtn').disabled = false;
+        setMessage('Statuses updated successfully.', 'ok');
+        if (res && res.trackerUrl) {
+          try { window.open(res.trackerUrl, '_blank'); } catch (_) {}
+        }
+        if (res && res.sheetName) {
+          const pill = document.createElement('span');
+          pill.className = 'pill';
+          pill.textContent = res.sheetName + ' updated';
+          $('orderTitle').appendChild(pill);
+        }
+      }).withFailureHandler(err => {
+        $('submitBtn').disabled = false;
+        const msg = err && err.message ? err.message : 'Failed to save updates.';
+        setMessage(msg, 'err');
+      }).admSubmitStatusUpdate(payload);
+    }
+
+    $('loadBtn').addEventListener('click', e => {
+      e.preventDefault();
+      loadOrder();
+    });
+
+    $('resetBtn').addEventListener('click', e => {
+      e.preventDefault();
+      $('soInput').value = '';
+      resetForm();
+    });
+
+    $('cancelBtn').addEventListener('click', e => {
+      e.preventDefault();
+      google.script.host.close();
+    });
+
+    $('statusForm').addEventListener('submit', submitForm);
+    $('soInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        loadOrder();
+      }
+    });
+
+    resetForm();
+    loadBootstrap();
+  </script>
+</body>
+</html>
