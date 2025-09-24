@@ -830,6 +830,13 @@ function admOpenClientStatusDialog(){
   SpreadsheetApp.getUi().showModalDialog(html, 'Update Client Status');
 }
 
+function admOpenSalesReportDialog(){
+  const html = HtmlService.createHtmlOutputFromFile('dlg_sales_report')
+    .setWidth(680)
+    .setHeight(420);
+  SpreadsheetApp.getUi().showModalDialog(html, 'Sales Report');
+}
+
 function collectColumnOptions_(label, defaults){
   const sh = sh_(MASTER_SHEET);
   const H = headerIndex1_(sh);
@@ -849,6 +856,172 @@ function collectColumnOptions_(label, defaults){
     if (s && !seen.has(s)) { seen.add(s); out.push(s); }
   });
   return out;
+}
+
+function pickHeader_(H, aliases){
+  const list = Array.isArray(aliases) ? aliases : [];
+  for (let i = 0; i < list.length; i++) {
+    const key = String(list[i] || '').trim();
+    if (key && H[key]) return H[key];
+  }
+  return 0;
+}
+
+function matchesFilterValue_(cellValue, filterValue){
+  const filter = String(filterValue || '').trim();
+  if (!filter) return true;
+  const cell = String(cellValue == null ? '' : cellValue).trim();
+  if (filter === '__BLANK__') return cell === '';
+  return cell.toLowerCase() === filter.toLowerCase();
+}
+
+function admSalesReportBootstrap(){
+  const options = {
+    salesStage: collectColumnOptions_('Sales Stage', ['Lead','Quotation Sent','Order Won','Order Lost','In Production']),
+    conversionStatus: collectColumnOptions_('Conversion Status', ['Quotation Requested','Quotation Sent','Converted','Lost']),
+    customOrderStatus: collectColumnOptions_('Custom Order Status', ['3D Requested','3D In Progress','3D Complete','Production','Shipped']),
+    inProductionStatus: collectColumnOptions_('In Production Status', ['Not Started','CAD','Casting','Setting','QA','Completed'])
+  };
+  return { options };
+}
+
+function buildSalesReportRows_(filters){
+  const sh = sh_(MASTER_SHEET);
+  const lastRow = sh.getLastRow();
+  const lastCol = sh.getLastColumn();
+  const H = headerIndex1_(sh);
+  const columns = {
+    companyId: pickHeader_(H, ['Company ID','Customer ID','Customer (Company) ID','CustomerID','ClientID','Account Code']),
+    businessName: pickHeader_(H, ['Business Name','Customer Name']),
+    soNumber: pickHeader_(H, ['SO#','SO','Sales Order','Sales Order #']),
+    salesStage: H['Sales Stage'] || 0,
+    conversionStatus: H['Conversion Status'] || 0,
+    customOrderStatus: H['Custom Order Status'] || 0,
+    inProductionStatus: H['In Production Status'] || 0,
+    orderTotal: pickHeader_(H, ['Order Total','OrderTotal','Total']),
+    paidToDate: pickHeader_(H, ['Paid-to-Date','Paid To Date','Paid-To-Date','Paid to Date','Paid']),
+    lastUpdatedBy: pickHeader_(H, ['Last Updated By','Updated By','Modified By','Owner']),
+    lastUpdatedOn: pickHeader_(H, ['Last Updated On','Updated On','Updated At','Modified At','Last Updated'])
+  };
+
+  const getCell = (row, col) => {
+    if (!col) return '';
+    const val = row[col - 1];
+    return val == null ? '' : String(val);
+  };
+
+  if (lastRow < 2 || lastCol < 1) {
+    return { rows: [], columns };
+  }
+
+  const values = sh.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
+  const rows = [];
+  const f = filters || {};
+  values.forEach(row => {
+    if (!matchesFilterValue_(getCell(row, columns.salesStage), f.salesStage)) return;
+    if (!matchesFilterValue_(getCell(row, columns.conversionStatus), f.conversionStatus)) return;
+    if (!matchesFilterValue_(getCell(row, columns.customOrderStatus), f.customOrderStatus)) return;
+    if (!matchesFilterValue_(getCell(row, columns.inProductionStatus), f.inProductionStatus)) return;
+
+    const soRaw = getCell(row, columns.soNumber);
+    rows.push([
+      getCell(row, columns.companyId),
+      getCell(row, columns.businessName),
+      soDisplay_(soRaw) || soRaw || '',
+      getCell(row, columns.salesStage),
+      getCell(row, columns.conversionStatus),
+      getCell(row, columns.customOrderStatus),
+      getCell(row, columns.inProductionStatus),
+      getCell(row, columns.orderTotal),
+      getCell(row, columns.paidToDate),
+      getCell(row, columns.lastUpdatedBy),
+      getCell(row, columns.lastUpdatedOn)
+    ]);
+  });
+  return { rows, columns };
+}
+
+function describeFilter_(label, value){
+  const v = String(value || '').trim();
+  if (!v) return '';
+  if (v === '__BLANK__') return label + ': (Blank)';
+  return label + ': ' + v;
+}
+
+function admGenerateSalesReport(filters){
+  const f = filters || {};
+  try {
+    const { rows } = buildSalesReportRows_(f);
+    const headers = [
+      'Company ID','Business Name','SO#','Sales Stage','Conversion Status',
+      'Custom Order Status','In Production Status','Order Total','Paid-to-Date',
+      'Last Updated By','Last Updated On'
+    ];
+
+    const tableRows = rows.slice();
+    if (!tableRows.length) {
+      const empty = new Array(headers.length).fill('');
+      empty[0] = 'No rows matched the selected filters.';
+      tableRows.push(empty);
+    }
+
+    const tz = ADM_TZ || Session.getScriptTimeZone() || 'America/Los_Angeles';
+    const timestamp = Utilities.formatDate(new Date(), tz, 'yyyyMMdd-HHmm');
+    const prettyStamp = Utilities.formatDate(new Date(), tz, 'MMMM d, yyyy h:mm a');
+    const name = 'Sales Report ' + timestamp;
+
+    const doc = DocumentApp.create(name);
+    const body = doc.getBody();
+    body.appendParagraph('Sales Report').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+    body.appendParagraph('Generated: ' + prettyStamp).setFontSize(10).setForegroundColor('#4b5563');
+
+    const summaryParts = [
+      describeFilter_('Sales Stage', f.salesStage),
+      describeFilter_('Conversion Status', f.conversionStatus),
+      describeFilter_('Custom Order Status', f.customOrderStatus),
+      describeFilter_('In Production Status', f.inProductionStatus)
+    ].filter(Boolean);
+    const summaryText = summaryParts.length ? summaryParts.join(' | ') : 'None (all records)';
+    body.appendParagraph('Filters: ' + summaryText).setFontSize(10).setForegroundColor('#4b5563');
+    body.appendParagraph('Rows: ' + (rows.length || 0)).setFontSize(10).setForegroundColor('#4b5563');
+
+    const table = body.appendTable([headers].concat(tableRows));
+    table.setBorderWidth(0.5);
+    const headerRow = table.getRow(0);
+    headerRow.setBackgroundColor('#1f2937');
+    for (let i = 0; i < headerRow.getNumCells(); i++) {
+      const cell = headerRow.getCell(i);
+      cell.setBackgroundColor('#1f2937');
+      const text = cell.getChild(0);
+      if (text && text.editAsText) {
+        const t = text.editAsText();
+        t.setBold(true).setForegroundColor('#ffffff');
+      }
+    }
+    for (let r = 1; r < table.getNumRows(); r++) {
+      if (r % 2 === 1) {
+        table.getRow(r).setBackgroundColor('#f9fafb');
+      }
+    }
+
+    doc.saveAndClose();
+
+    const docId = doc.getId();
+    const pdfBlob = DriveApp.getFileById(docId).getAs(MimeType.PDF);
+    const folder = ensureFolderChild_(DriveApp.getRootFolder(), 'ADM Reports');
+    const pdfFile = folder.createFile(pdfBlob).setName(name + '.pdf');
+    DriveApp.getFileById(docId).setTrashed(true);
+
+    return {
+      ok: true,
+      rowCount: rows.length,
+      pdfUrl: pdfFile.getUrl(),
+      pdfId: pdfFile.getId(),
+      fileName: pdfFile.getName()
+    };
+  } catch (err) {
+    return { ok: false, error: err && err.message ? err.message : String(err) };
+  }
 }
 
 function formatDateYMD_(val){
