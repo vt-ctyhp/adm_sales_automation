@@ -17,6 +17,9 @@ const WH_DOCS_FOLDER_FALLBACK_ID = (SP.getProperty('WH_DOCS_FOLDER_FALLBACK_ID')
 const WH_ORDERS_TAB_NAMES = (SP.getProperty('WH_ORDERS_TAB_NAMES_CSV') || '')
   .split(',').map(s=>s.trim()).filter(Boolean);
 
+const ORDERS_INDEX_CACHE_KEY = 'WH_ORDERS_INDEX_V1';
+const ORDERS_INDEX_CACHE_TTL_SEC = 5 * 60; // 5 minutes
+
 // Aliases for headers (include your exact labels)
 const SO_ALIASES        = pickList_(SP.getProperty('WH_SO_COL_ALIASES'),        ['SO#','SO','Sales Order','Sales Order #']);
 const SOFOLDER_ALIASES  = pickList_(SP.getProperty('WH_SOFOLDER_COL_ALIASES'),  ['SO Folder ID','SO Folder URL','Folder URL']);
@@ -114,11 +117,12 @@ function readActiveContext_(){
   const H = hIndex_(hdr);
   dbg('readActiveContext_: active sheet + headers', {sheet: sh.getName(), headers: hdr});
 
-  const soCol   = pickH_(H, SO_ALIASES);
-  const cidCol  = pickH_(H, CUSTID_ALIASES);
-  const compCol = pickH_(H, COMPANY_ALIASES);
-  const contact = pickH_(H, CONTACT_ALIASES);
-  const addrCol = pickH_(H, ADDRESS_ALIASES);
+  const soCol    = pickH_(H, SO_ALIASES);
+  const cidCol   = pickH_(H, CUSTID_ALIASES);
+  const compCol  = pickH_(H, COMPANY_ALIASES);
+  const contact  = pickH_(H, CONTACT_ALIASES);
+  const addrCol  = pickH_(H, ADDRESS_ALIASES);
+  const productC = pickH_(H, PRODUCT_DESC_ALIASES);
   const trkCol  = pickH_(H, TRACKER_ALIASES);
 
   dbg('readActiveContext_: alias matches', {soCol, cidCol, compCol, contact, addrCol, trkCol});
@@ -147,7 +151,8 @@ function readActiveContext_(){
     companyName:compCol? String(rowVals[compCol-1]||'').trim() : '',
     contactName:contact? String(rowVals[contact-1]||'').trim() : '',
     address:    address,
-    trackerUrl: trkCol ? String(rowVals[trkCol-1]||'').trim() : ''
+    trackerUrl: trkCol ? String(rowVals[trkCol-1]||'').trim() : '',
+    productDesc: productC ? String(rowVals[productC-1]||'').trim() : ''
   };
 
   if (!ctx.contactName) {
@@ -170,7 +175,8 @@ function readActiveContext_(){
         companyName: ctx.companyName || extra.companyName || '',
         contactName: ctx.contactName || extra.contactName || '',
         address: ctx.address || extra.address || '',
-        trackerUrl: ctx.trackerUrl || extra.trackerUrl || ''
+        trackerUrl: ctx.trackerUrl || extra.trackerUrl || '',
+        productDesc: ctx.productDesc || extra.productDesc || ''
       };
       dbg('readActiveContext_: filled blanks from orders tabs via SO', {so: ctx.soNumber, filled: ctx});
     } else {
@@ -198,70 +204,15 @@ function readActiveContext_(){
   return ctx;
 }
 
-function blankCtx_(){ return { sheetName:'', rowIndex:0, soNumber:'', customerId:'', companyName:'', contactName:'', address:'', trackerUrl:'' }; }
+function blankCtx_(){ return { sheetName:'', rowIndex:0, soNumber:'', customerId:'', companyName:'', contactName:'', address:'', trackerUrl:'', productDesc:'' }; }
 
 /** Find a single row on the configured orders tabs by SO number and return key fields. */
 function findOrdersRowBySO_(soNumber){
-  const so = String(soNumber||'').trim(); if (!so) return null;
-  const ss = SpreadsheetApp.getActive();
-  const tabs = WH_ORDERS_TAB_NAMES.length ? WH_ORDERS_TAB_NAMES : ss.getSheets().map(s=>s.getName());
-  dbg('findOrdersRowBySO_: scanning tabs', tabs);
-
-  for (const name of tabs) {
-    const sh = ss.getSheetByName(name); if (!sh) continue;
-    const lr = sh.getLastRow(), lc = sh.getLastColumn(); if (lr<2) continue;
-    const hdr = sh.getRange(1,1,1,lc).getDisplayValues()[0].map(s=>String(s||'').trim());
-    const H = hIndex_(hdr);
-
-    const cSO  = pickH_(H, SO_ALIASES);
-    const cCID = pickH_(H, CUSTID_ALIASES);
-    const cCMP = pickH_(H, COMPANY_ALIASES);
-    const cCON = pickH_(H, CONTACT_ALIASES);
-    const cADR = pickH_(H, ADDRESS_ALIASES);
-    const cTRK = pickH_(H, TRACKER_ALIASES);
-    const cPD  = pickH_(H, PRODUCT_DESC_ALIASES);
-    const cFirst = pickH_(H, CONTACT_FIRST_ALIASES);
-    const cLast  = pickH_(H, CONTACT_LAST_ALIASES);
-    const cStreet = pickH_(H, STREET_ALIASES);
-    const cCity   = pickH_(H, CITY_ALIASES);
-    const cState  = pickH_(H, STATE_ALIASES);
-    const cZip    = pickH_(H, ZIP_ALIASES);
-
-    if (!cSO) continue;
-    const vals = sh.getRange(2,1,lr-1,lc).getDisplayValues();
-    for (let i=0;i<vals.length;i++){
-      const r = vals[i];
-      const s = String(r[cSO-1]||'').trim();
-      if (!s) continue;
-      if (soEq_(s, so)) {
-        const out = {
-          sheet: name, rowIndex: i+2,
-          soNumber: s,
-          customerId: cCID ? String(r[cCID-1]||'').trim() : '',
-          companyName: cCMP ? String(r[cCMP-1]||'').trim() : '',
-          contactName: cCON ? String(r[cCON-1]||'').trim() : '',
-          address:     cADR ? String(r[cADR-1]||'').trim() : '',
-          trackerUrl:  cTRK ? String(r[cTRK-1]||'').trim() : '',
-          productDesc: cPD  ? String(r[cPD-1]||'').trim() : ''
-        };
-        if (!out.contactName && (cFirst || cLast)) {
-          const first = cFirst ? String(r[cFirst-1]||'').trim() : '';
-          const last  = cLast  ? String(r[cLast-1]||'').trim() : '';
-          out.contactName = [first, last].filter(Boolean).join(' ').trim();
-        }
-        if (!out.address && (cStreet || cCity || cState || cZip)) {
-          const street = cStreet?String(r[cStreet-1]||'').trim():'';
-          const city   = cCity?String(r[cCity-1]||'').trim():'';
-          const state  = cState?String(r[cState-1]||'').trim():'';
-          const zip    = cZip?String(r[cZip-1]||'').trim():'';
-          out.address = joinAddressParts_(street, city, state, zip);
-        }
-        dbg('findOrdersRowBySO_: match', out);
-        return out;
-      }
-    }
-  }
-  return null;
+  const entry = lookupOrderBySo_(soNumber);
+  if (!entry) return null;
+  const clone = cloneOrderEntry_(entry);
+  dbg('findOrdersRowBySO_: cache hit', clone);
+  return clone;
 }
 
 function findCrmRow_(customerId, companyName){
@@ -345,66 +296,168 @@ function buildCrmPayload_(row, cols){
   return out;
 }
 
-// ============================= LOOKUPS =============================
-function wh_listSOsForCustomer(customerId, limit){
-  customerId = String(customerId||'').trim();
-  if (!customerId) return [];
-  const ss = SpreadsheetApp.getActive();
-  const tabNames = WH_ORDERS_TAB_NAMES.length ? WH_ORDERS_TAB_NAMES : ss.getSheets().map(s=>s.getName());
-  dbg('wh_listSOsForCustomer: args', {customerId, limit, tabNames});
-
-  const out = [];
-  for (const name of tabNames) {
-    const sh = ss.getSheetByName(name);
-    if (!sh) continue;
-    const lr = sh.getLastRow(), lc = sh.getLastColumn();
-    if (lr < 2) continue;
-    const hdr = sh.getRange(1,1,1,lc).getDisplayValues()[0].map(s=>String(s||'').trim());
-    const H = hIndex_(hdr);
-
-    const cSO  = pickH_(H, SO_ALIASES);
-    const cCID = pickH_(H, CUSTID_ALIASES);
-    const cPD  = pickH_(H, PRODUCT_DESC_ALIASES);
-    dbg('wh_listSOsForCustomer: header map', {tab:name, cSO, cCID, cPD});
-
-    if (!cSO) continue;
-    const vals = sh.getRange(2,1,lr-1,lc).getDisplayValues();
-
-    for (let i=0;i<vals.length;i++){
-      const r = vals[i];
-      const so = String(r[cSO-1]||'').trim();
-      if (!so) continue;
-
-      const id = cCID ? String(r[cCID-1]||'').trim() : '';
-      if (!id) {
-        dbg('wh_listSOsForCustomer: skipping row (no customer id)', {tab:name, rowIndex:i+2, so});
-        continue;
-      }
-
-      if (!customerIdsEqual_(id, customerId)) {
-        dbg('wh_listSOsForCustomer: skipping row (id mismatch)', {
-          tab: name,
-          rowIndex: i+2,
-          so,
-          rowCustomerId: id,
-          targetCustomerId: customerId
-        });
-        continue;
-      }
-
-      out.push({
-        soNumber: so,
-        customerId: cCID ? String(r[cCID-1]||'').trim() : '',
-        productDesc: cPD ? String(r[cPD-1]||'').trim() : '',
-        sheet: name,
-        rowIndex: i+2
-      });
-
-      if (limit && out.length >= limit) {
-        dbg('wh_listSOsForCustomer: hit limit', out.length);
-        return out;
+function ordersIndex_(){
+  const cache = CacheService.getDocumentCache && CacheService.getDocumentCache();
+  if (cache) {
+    const cached = cache.get(ORDERS_INDEX_CACHE_KEY);
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        if (parsed && parsed.bySo && parsed.byCustomer) {
+          return parsed;
+        }
+      } catch (err) {
+        dbg('ordersIndex_: cache parse failed', String(err));
       }
     }
+  }
+
+  const built = buildOrdersIndex_();
+  if (cache) {
+    try {
+      const json = JSON.stringify(built);
+      if (json && json.length < 90000) {
+        cache.put(ORDERS_INDEX_CACHE_KEY, json, ORDERS_INDEX_CACHE_TTL_SEC);
+      }
+    } catch (err) {
+      dbg('ordersIndex_: cache write failed', String(err));
+    }
+  }
+  return built;
+}
+
+function buildOrdersIndex_(){
+  const ss = SpreadsheetApp.getActive();
+  const tabNames = WH_ORDERS_TAB_NAMES.length ? WH_ORDERS_TAB_NAMES : ss.getSheets().map(s=>s.getName());
+  const bySo = {};
+  const byCustomer = {};
+
+  for (const name of tabNames) {
+    const sh = ss.getSheetByName(name); if (!sh) continue;
+    const lr = sh.getLastRow(), lc = sh.getLastColumn(); if (lr < 2 || lc < 1) continue;
+    const headers = sh.getRange(1,1,1,lc).getDisplayValues()[0].map(s=>String(s||'').trim());
+    const H = hIndex_(headers);
+
+    const cSO  = pickH_(H, SO_ALIASES); if (!cSO) continue;
+    const cCID = pickH_(H, CUSTID_ALIASES);
+    const cCMP = pickH_(H, COMPANY_ALIASES);
+    const cCON = pickH_(H, CONTACT_ALIASES);
+    const cAddr = pickH_(H, ADDRESS_ALIASES);
+    const cTRK = pickH_(H, TRACKER_ALIASES);
+    const cPD  = pickH_(H, PRODUCT_DESC_ALIASES);
+    const cFirst = pickH_(H, CONTACT_FIRST_ALIASES);
+    const cLast  = pickH_(H, CONTACT_LAST_ALIASES);
+    const cStreet = pickH_(H, STREET_ALIASES);
+    const cCity   = pickH_(H, CITY_ALIASES);
+    const cState  = pickH_(H, STATE_ALIASES);
+    const cZip    = pickH_(H, ZIP_ALIASES);
+
+    const rows = sh.getRange(2,1,lr-1,lc).getDisplayValues();
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const soRaw = String(row[cSO-1]||'').trim();
+      if (!soRaw) continue;
+
+      const entry = {
+        sheet: name,
+        rowIndex: i + 2,
+        soNumber: soRaw,
+        customerId: cCID ? String(row[cCID-1]||'').trim() : '',
+        companyName: cCMP ? String(row[cCMP-1]||'').trim() : '',
+        contactName: cCON ? String(row[cCON-1]||'').trim() : '',
+        address: cAddr ? String(row[cAddr-1]||'').trim() : '',
+        trackerUrl: cTRK ? String(row[cTRK-1]||'').trim() : '',
+        productDesc: cPD ? String(row[cPD-1]||'').trim() : ''
+      };
+
+      if (!entry.contactName && (cFirst || cLast)) {
+        const first = cFirst ? String(row[cFirst-1]||'').trim() : '';
+        const last  = cLast  ? String(row[cLast-1]||'').trim() : '';
+        entry.contactName = [first, last].filter(Boolean).join(' ').trim();
+      }
+
+      if (!entry.address && (cStreet || cCity || cState || cZip)) {
+        const street = cStreet ? String(row[cStreet-1]||'').trim() : '';
+        const city   = cCity   ? String(row[cCity-1]||'').trim() : '';
+        const state  = cState  ? String(row[cState-1]||'').trim() : '';
+        const zip    = cZip    ? String(row[cZip-1]||'').trim() : '';
+        entry.address = joinAddressParts_(street, city, state, zip);
+      }
+
+      const variants = soKeyVariants_(soRaw);
+      variants.forEach(key => {
+        if (key && !bySo[key]) {
+          bySo[key] = entry;
+        }
+      });
+
+      const custKey = normalizeCustomerId_(entry.customerId);
+      if (custKey) {
+        if (!byCustomer[custKey]) byCustomer[custKey] = [];
+        byCustomer[custKey].push(entry);
+      }
+    }
+  }
+
+  dbg('buildOrdersIndex_: built', {
+    tabs: tabNames,
+    soEntries: Object.keys(bySo).length,
+    customerBuckets: Object.keys(byCustomer).length
+  });
+
+  return { bySo, byCustomer, builtAt: new Date().toISOString() };
+}
+
+function lookupOrderBySo_(soNumber){
+  const variants = soKeyVariants_(soNumber);
+  if (!variants.length) return null;
+  const index = ordersIndex_();
+  for (const key of variants) {
+    if (key && index.bySo && index.bySo[key]) {
+      return index.bySo[key];
+    }
+  }
+  return null;
+}
+
+function cloneOrderEntry_(entry){
+  if (!entry) return null;
+  return {
+    sheet: entry.sheet || '',
+    rowIndex: entry.rowIndex || 0,
+    soNumber: entry.soNumber || '',
+    customerId: entry.customerId || '',
+    companyName: entry.companyName || '',
+    contactName: entry.contactName || '',
+    address: entry.address || '',
+    trackerUrl: entry.trackerUrl || '',
+    productDesc: entry.productDesc || ''
+  };
+}
+
+// ============================= LOOKUPS =============================
+function wh_listSOsForCustomer(customerId, limit){
+  const normalized = normalizeCustomerId_(customerId);
+  if (!normalized) return [];
+  const index = ordersIndex_();
+  const bucket = index.byCustomer && index.byCustomer[normalized];
+  if (!bucket || !bucket.length) {
+    dbg('wh_listSOsForCustomer: no entries for customer', { customerId });
+    return [];
+  }
+  const out = [];
+  for (let i = 0; i < bucket.length; i++) {
+    const entry = bucket[i];
+    out.push({
+      soNumber: entry.soNumber || '',
+      customerId: entry.customerId || '',
+      companyName: entry.companyName || '',
+      productDesc: entry.productDesc || '',
+      trackerUrl: entry.trackerUrl || '',
+      sheet: entry.sheet || '',
+      rowIndex: entry.rowIndex || 0
+    });
+    if (limit && out.length >= limit) break;
   }
   dbg('wh_listSOsForCustomer: result size', out.length);
   return out;
@@ -426,7 +479,9 @@ function wh_getKnownSOs(customerId, primarySO){
     productDesc: found.productDesc || '',
     sheet: found.sheet,
     rowIndex: found.rowIndex,
-    customerId: found.customerId || ''
+    customerId: found.customerId || '',
+    companyName: found.companyName || '',
+    trackerUrl: found.trackerUrl || ''
   }];
 }
 
@@ -1377,6 +1432,25 @@ function makeTable_(headers, rows, opts){
   temp.saveAndClose();
   DriveApp.getFileById(id).setTrashed(true);
   return copy;
+}
+
+function soKey_(so){
+  return String(so||'')
+    .replace(/\u00a0/g, ' ')
+    .trim()
+    .replace(/\s+/g, '')
+    .toUpperCase();
+}
+
+function soKeyVariants_(so){
+  const variants = [];
+  const primary = soKey_(so);
+  if (primary) variants.push(primary);
+  const raw = String(so||'').trim().toUpperCase();
+  if (raw && !variants.includes(raw)) variants.push(raw);
+  const digits = String(so||'').replace(/[^0-9]/g, '');
+  if (digits && !variants.includes(digits)) variants.push(digits);
+  return variants;
 }
 
 function normalizeCustomerId_(id){

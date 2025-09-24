@@ -216,6 +216,10 @@ function html(s){
   const map = {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"};
   return String(s==null?'':s).replace(/[&<>"']/g, c => map[c]);
 }
+function soSame(a,b){
+  const norm = v => String(v||'').replace(/\u00a0/g,' ').trim().replace(/\s+/g,'').toUpperCase();
+  return norm(a) === norm(b);
+}
 function chip(so, sel){
   const s=document.createElement('span');
   s.className='chip'+(sel?' sel':''); s.textContent=so;
@@ -238,6 +242,12 @@ function mergeTypedSOs(text){
 function syncLinesWithSOs(){
   const known = {}; (window._knownSOs||[]).forEach(o=> known[o.soNumber] = o.productDesc || '');
   const have = new Set(state.lines.map(l=>String(l.so||'')));
+  state.lines.forEach(ln=>{
+    const so = String(ln.so||'');
+    if (so && (!ln.desc || !String(ln.desc).trim()) && known[so]) {
+      ln.desc = known[so];
+    }
+  });
   Array.from(state.selectedSOs).forEach(so=>{
     if (!have.has(so)) state.lines.push({ so, desc: known[so]||'', qty:1, amt:0 });
   });
@@ -408,13 +418,48 @@ function boot(){
     state.docDateISO = (nowIso||'').slice(0,16);      $('docDate').value = state.docDateISO;
     const d = new Date(nowIso); d.setDate(d.getDate()+2); $('dueDate').value = d.toISOString().slice(0,10);
 
+    state.selectedSOs = new Set();
     state.lines = [];
+    if ((ctx.productDesc||'') && (state.primarySO||'')) {
+      state.lines.push({ so: state.primarySO, desc: ctx.productDesc||'', qty:1, amt:0 });
+    }
     refreshVisibility();
 
     // NEW: if no customerId, still fetch known info using primary SO so descriptions prefill
     google.script.run.withSuccessHandler(list=>{
       renderKnown(list);
+      const match = (list||[]).find(item=> soSame(item.soNumber, state.primarySO));
+      const first = match || (list && list[0]);
+      if (first) {
+        if (!state.primarySO && first.soNumber) {
+          state.primarySO = first.soNumber;
+          $('primarySO').value = state.primarySO;
+        }
+        if (!state.customerId && first.customerId) {
+          state.customerId = first.customerId;
+          $('customerId').value = state.customerId;
+        }
+        if (!state.companyName && first.companyName) {
+          state.companyName = first.companyName;
+          $('companyName').value = state.companyName;
+        }
+        if (!state.trackerUrl && first.trackerUrl) {
+          state.trackerUrl = first.trackerUrl;
+          $('trackerUrl').value = state.trackerUrl;
+        }
+        if (!state.lines.length && first.productDesc && (state.primarySO || first.soNumber)) {
+          state.lines.push({
+            so: state.primarySO || first.soNumber,
+            desc: first.productDesc,
+            qty: 1,
+            amt: 0
+          });
+        }
+      }
       if (state.primarySO) state.selectedSOs.add(state.primarySO);
+      if (!state.selectedSOs.size && first && first.soNumber) {
+        state.selectedSOs.add(first.soNumber);
+      }
       syncLinesWithSOs();
       renderSO();
     }).wh_getKnownSOs(state.customerId, state.primarySO);
