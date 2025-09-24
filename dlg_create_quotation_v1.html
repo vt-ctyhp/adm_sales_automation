@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <style>
+    :root {
+      font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, "Roboto", sans-serif;
+      color: #1f2937;
+    }
+    body {
+      margin: 0;
+      background: #f9fafb;
+    }
+    h2 {
+      margin: 0 0 12px;
+      font-size: 20px;
+      color: #111827;
+    }
+    h3 {
+      margin: 0 0 8px;
+      font-size: 15px;
+      color: #1f2937;
+    }
+    .wrap {
+      padding: 18px 22px 70px;
+      display: grid;
+      gap: 16px;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+    }
+    .header .link a {
+      color: #2563eb;
+      text-decoration: none;
+      font-size: 13px;
+    }
+    .error-box {
+      display: none;
+      padding: 12px;
+      border-radius: 8px;
+      background: #fee2e2;
+      color: #b91c1c;
+      font-size: 13px;
+    }
+    .grid {
+      display: grid;
+      gap: 16px;
+      grid-template-columns: 280px 1fr 260px;
+    }
+    @media (max-width: 1180px) {
+      .grid { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+    }
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 16px;
+      box-shadow: 0 12px 30px rgba(15,23,42,0.08);
+      display: grid;
+      gap: 12px;
+    }
+    .field {
+      display: grid;
+      gap: 4px;
+      font-size: 13px;
+    }
+    .field label {
+      font-weight: 600;
+      color: #1f2937;
+    }
+    .readonly {
+      background: #f3f4f6;
+      border-radius: 8px;
+      padding: 8px 10px;
+      min-height: 32px;
+      display: flex;
+      align-items: center;
+      color: #374151;
+    }
+    input[type="text"], input[type="number"], textarea {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid #d1d5db;
+      font-size: 13px;
+      font-family: inherit;
+      transition: border-color .15s ease;
+    }
+    textarea {
+      min-height: 72px;
+      resize: vertical;
+    }
+    input:focus, textarea:focus {
+      border-color: #2563eb;
+      outline: none;
+      box-shadow: 0 0 0 2px rgba(37,99,235,0.12);
+    }
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      max-height: 180px;
+      overflow-y: auto;
+      padding: 4px 0;
+    }
+    .chip {
+      padding: 6px 10px;
+      border-radius: 16px;
+      border: 1px solid #d1d5db;
+      font-size: 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      background: #fff;
+      color: #1f2937;
+      transition: background .15s ease, border-color .15s ease;
+    }
+    .chip.selected {
+      background: #e0e7ff;
+      border-color: #4338ca;
+      color: #312e81;
+      font-weight: 600;
+    }
+    .chip .meta {
+      font-size: 11px;
+      color: #6b7280;
+    }
+    .chip.selected .meta {
+      color: #4338ca;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    thead th {
+      text-align: left;
+      padding: 6px 8px;
+      background: #f3f4f6;
+      border-bottom: 1px solid #e5e7eb;
+      font-weight: 600;
+      color: #374151;
+    }
+    tbody td {
+      padding: 6px 8px;
+      border-bottom: 1px solid #e5e7eb;
+      vertical-align: top;
+    }
+    tbody tr:last-child td { border-bottom: none; }
+    tbody td.actions {
+      width: 36px;
+      text-align: right;
+    }
+    .mini-btn {
+      background: #f3f4f6;
+      border: none;
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background .15s ease;
+    }
+    .mini-btn:hover { background: #e5e7eb; }
+    .mini-btn.danger {
+      background: #fee2e2;
+      color: #b91c1c;
+    }
+    .mini-btn.danger:hover { background: #fecaca; }
+    .hint {
+      font-size: 12px;
+      color: #6b7280;
+    }
+    .pricing-grid {
+      display: grid;
+      gap: 10px;
+    }
+    .currency-input {
+      text-align: right;
+    }
+    .actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+      position: sticky;
+      bottom: 0;
+      padding: 12px 0 0;
+      background: linear-gradient(180deg, rgba(249,250,251,0) 0%, rgba(249,250,251,0.9) 40%, rgba(249,250,251,1) 100%);
+    }
+    button {
+      border-radius: 999px;
+      padding: 10px 18px;
+      border: none;
+      font-size: 13px;
+      cursor: pointer;
+      font-weight: 600;
+      transition: transform .15s ease, box-shadow .15s ease;
+    }
+    button.primary {
+      background: linear-gradient(135deg, #4f46e5, #2563eb);
+      color: #fff;
+      box-shadow: 0 8px 20px rgba(79,70,229,0.35);
+    }
+    button.secondary { background: #e5e7eb; color: #1f2937; }
+    button:disabled {
+      opacity: .6;
+      cursor: wait;
+      box-shadow: none;
+    }
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 24px;
+      transform: translateX(-50%) translateY(20px);
+      background: #111827;
+      color: #f9fafb;
+      padding: 10px 16px;
+      border-radius: 999px;
+      font-size: 13px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .2s ease, transform .2s ease;
+      box-shadow: 0 12px 30px rgba(15,23,42,0.3);
+      z-index: 50;
+    }
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="header">
+      <div>
+        <h2>Create Quotation</h2>
+        <div class="hint">Prefill pulled from 00_Master Appointments. Update fields before generating.</div>
+      </div>
+      <div id="linkWrap" class="link"></div>
+    </div>
+
+    <div id="errorBox" class="error-box"></div>
+
+    <div class="grid">
+      <section class="card" id="colContext">
+        <div class="field">
+          <label>Customer</label>
+          <div class="readonly" id="ctxCustomer">—</div>
+        </div>
+        <div class="field">
+          <label>Email</label>
+          <div class="readonly" id="ctxEmail">—</div>
+        </div>
+        <div class="field">
+          <label>Phone</label>
+          <div class="readonly" id="ctxPhone">—</div>
+        </div>
+        <div class="field">
+          <label>Brand</label>
+          <div class="readonly" id="ctxBrand">—</div>
+        </div>
+        <div class="field">
+          <label>RootApptID</label>
+          <div class="readonly" id="ctxRoot">—</div>
+        </div>
+        <div class="field">
+          <label>Known SOs for this customer</label>
+          <input type="text" id="soSearch" placeholder="Search by SO or brand…" oninput="filterChips(this.value)">
+          <div id="chipList" class="chips"></div>
+          <div class="hint">Select one or more SOs to include. Each adds a line item.</div>
+        </div>
+      </section>
+
+      <section class="card" id="colItems">
+        <div class="header" style="margin:0; align-items:center;">
+          <h3 style="margin:0;">Line Items</h3>
+          <button type="button" class="mini-btn" onclick="addCustomRow()">+ Add Row</button>
+        </div>
+        <div class="hint">SO column is locked for selected orders. Custom rows allow blank SOs.</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:120px;">SO#</th>
+                <th>Product Description</th>
+                <th>Product Details</th>
+                <th style="width:60px;">Qty</th>
+                <th style="width:40px;"></th>
+              </tr>
+            </thead>
+            <tbody id="itemRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card" id="colPricing">
+        <h3>Pricing</h3>
+        <div class="hint">Enter currency values. Formatting is applied automatically.</div>
+        <div class="pricing-grid">
+          <div class="field">
+            <label>V1 Quotation <span style="color:#ef4444;">*</span></label>
+            <input id="priceV1" class="currency-input" type="text" placeholder="$0.00" oninput="onPriceInput('v1', this.value)" onblur="onPriceBlur('v1')">
+          </div>
+          <div class="field">
+            <label>V2 Quotation</label>
+            <input id="priceV2" class="currency-input" type="text" placeholder="$0.00" oninput="onPriceInput('v2', this.value)" onblur="onPriceBlur('v2')">
+          </div>
+          <div class="field">
+            <label>Approved Price</label>
+            <input id="priceApproved" class="currency-input" type="text" placeholder="$0.00" oninput="onPriceInput('approved', this.value)" onblur="onPriceBlur('approved')">
+          </div>
+        </div>
+        <div class="hint" id="currencyHint"></div>
+      </section>
+    </div>
+
+    <div class="actions">
+      <button type="button" class="secondary" onclick="google.script.host.close()">Cancel</button>
+      <button type="button" id="btnSaveOnly" class="secondary" onclick="submitQuotation(true)">Save Only (no doc)</button>
+      <button type="button" id="btnGenerate" class="primary" onclick="submitQuotation(false)">Generate &amp; Save Quotation</button>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    const state = {
+      context: null,
+      items: [],
+      knownSOs: [],
+      selectedKeys: new Set(),
+      pricing: { v1: '', v2: '', approved: '' },
+      pricingInputs: { v1: '', v2: '', approved: '' },
+      chipFilter: '',
+      busy: false,
+      links: {}
+    };
+
+    function init() {
+      toggleBusy(true);
+      google.script.run.withSuccessHandler(onInit).withFailureHandler(err => {
+        toggleBusy(false);
+        showError(err && err.message ? err.message : 'Failed to load context.');
+      }).qc_init();
+    }
+
+    function onInit(payload) {
+      toggleBusy(false);
+      if (!payload || !payload.context) {
+        showError('Unable to load active row context.');
+        return;
+      }
+      state.context = payload.context;
+      state.links = payload.links || {};
+      state.knownSOs = Array.isArray(payload.knownSOs) ? payload.knownSOs : [];
+      renderContext(payload.context);
+      renderLink();
+      if (payload.ui && payload.ui.currencyHint) {
+        document.getElementById('currencyHint').textContent = payload.ui.currencyHint;
+      }
+
+      const snapshot = payload.productSnapshot || {};
+      const baseItem = {
+        id: makeId(),
+        key: null,
+        so: snapshot.so || '',
+        productDescription: snapshot.productDescription || '',
+        productDetails: snapshot.productDetails || '',
+        qty: snapshot.quantity || 1,
+        locked: Boolean(snapshot.so)
+      };
+
+      if (snapshot.so) {
+        const match = state.knownSOs.find(entry => entry.so === snapshot.so);
+        if (match) {
+          state.selectedKeys.add(match.key);
+          baseItem.key = match.key;
+          baseItem.locked = true;
+          baseItem.productDescription = baseItem.productDescription || match.productDescription || '';
+          baseItem.productDetails = baseItem.productDetails || match.productDetails || '';
+          baseItem.qty = match.quantity || baseItem.qty || 1;
+        }
+      }
+
+      state.items = [baseItem];
+      renderChips();
+      renderItems();
+      initPricing(payload.money || {});
+      hideError();
+    }
+
+    function renderContext(ctx) {
+      document.getElementById('ctxCustomer').textContent = ctx.customerName || '—';
+      document.getElementById('ctxEmail').textContent = ctx.emailLower || '—';
+      document.getElementById('ctxPhone').textContent = ctx.phoneNorm || '—';
+      document.getElementById('ctxBrand').textContent = ctx.brand || '—';
+      document.getElementById('ctxRoot').textContent = ctx.RootApptID || '—';
+    }
+
+    function renderLink() {
+      const wrap = document.getElementById('linkWrap');
+      wrap.innerHTML = '';
+      const link = state.links && state.links.quotationUrl && state.links.quotationUrl.url;
+      if (link) {
+        const a = document.createElement('a');
+        a.href = link;
+        a.textContent = 'Open existing quotation';
+        a.target = '_blank';
+        wrap.appendChild(a);
+      }
+    }
+
+    function renderChips() {
+      const host = document.getElementById('chipList');
+      host.innerHTML = '';
+      const filter = state.chipFilter.trim().toLowerCase();
+      state.knownSOs.forEach(entry => {
+        if (filter) {
+          const hay = (entry.label + ' ' + (entry.productDescription || '')).toLowerCase();
+          if (!hay.includes(filter)) return;
+        }
+        const el = document.createElement('div');
+        el.className = 'chip' + (state.selectedKeys.has(entry.key) ? ' selected' : '');
+        el.setAttribute('data-key', entry.key);
+        el.onclick = () => toggleChip(entry.key);
+        const main = document.createElement('div');
+        main.textContent = entry.label || entry.so;
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        meta.textContent = entry.productDescription || '';
+        el.appendChild(main);
+        if (entry.productDescription) el.appendChild(meta);
+        host.appendChild(el);
+      });
+    }
+
+    function renderItems() {
+      const tbody = document.getElementById('itemRows');
+      tbody.innerHTML = '';
+      state.items.forEach((item, idx) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>
+            <input type="text" value="${escapeHtml(item.so || '')}" ${item.locked ? 'readonly' : ''}
+              oninput="onItemSoChange(${idx}, this.value)" placeholder="SO…">
+          </td>
+          <td>
+            <textarea oninput="onItemDescriptionChange(${idx}, this.value)">${escapeHtml(item.productDescription || '')}</textarea>
+          </td>
+          <td>
+            <textarea oninput="onItemDetailsChange(${idx}, this.value)">${escapeHtml(item.productDetails || '')}</textarea>
+          </td>
+          <td>
+            <input type="number" min="1" step="1" value="${Number(item.qty) || 1}" oninput="onItemQtyChange(${idx}, this.value)">
+          </td>
+          <td class="actions">
+            ${item.locked ? '' : `<button type="button" class="mini-btn danger" onclick="removeItem(${idx})">×</button>`}
+          </td>`;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function initPricing(money) {
+      const map = {
+        v1: money['V1 Quotation'] || {},
+        v2: money['V2 Quotation'] || {},
+        approved: money['Approved Price'] || {}
+      };
+      ['v1', 'v2', 'approved'].forEach(key => {
+        const entry = map[key];
+        const number = entry && entry.number !== '' ? Number(entry.number) : '';
+        state.pricing[key] = isFinite(number) ? number : '';
+        state.pricingInputs[key] = entry && entry.display ? entry.display : (isFinite(number) ? formatCurrency(number) : '');
+        const el = document.getElementById(priceInputId(key));
+        if (el) el.value = state.pricingInputs[key] || '';
+      });
+    }
+
+    function priceInputId(key) {
+      return key === 'v1' ? 'priceV1' : key === 'v2' ? 'priceV2' : 'priceApproved';
+    }
+
+    function toggleChip(key) {
+      const entry = state.knownSOs.find(e => e.key === key);
+      if (!entry) return;
+      if (state.selectedKeys.has(key)) {
+        state.selectedKeys.delete(key);
+        state.items = state.items.filter(item => item.key !== key);
+        if (!state.items.length) {
+          state.items.push({ id: makeId(), key: null, so: '', productDescription: '', productDetails: '', qty: 1, locked: false });
+        }
+      } else {
+        state.selectedKeys.add(key);
+        const existing = state.items.find(item => item.key === key);
+        if (!existing) {
+          state.items.push({
+            id: makeId(),
+            key,
+            so: entry.so,
+            productDescription: entry.productDescription || '',
+            productDetails: entry.productDetails || '',
+            qty: entry.quantity || 1,
+            locked: true
+          });
+        }
+      }
+      renderChips();
+      renderItems();
+    }
+
+    function addCustomRow() {
+      state.items.push({ id: makeId(), key: null, so: '', productDescription: '', productDetails: '', qty: 1, locked: false });
+      renderItems();
+    }
+
+    function removeItem(idx) {
+      state.items.splice(idx, 1);
+      if (!state.items.length) {
+        state.items.push({ id: makeId(), key: null, so: '', productDescription: '', productDetails: '', qty: 1, locked: false });
+      }
+      renderItems();
+    }
+
+    function onItemSoChange(idx, value) {
+      const item = state.items[idx];
+      if (!item || item.locked) return;
+      item.so = value;
+    }
+
+    function onItemDescriptionChange(idx, value) {
+      const item = state.items[idx];
+      if (!item) return;
+      item.productDescription = value;
+    }
+
+    function onItemDetailsChange(idx, value) {
+      const item = state.items[idx];
+      if (!item) return;
+      item.productDetails = value;
+    }
+
+    function onItemQtyChange(idx, value) {
+      const item = state.items[idx];
+      if (!item) return;
+      const num = Math.max(1, Math.floor(Number(value || 0)) || 1);
+      item.qty = num;
+      renderItems();
+    }
+
+    function onPriceInput(key, value) {
+      state.pricingInputs[key] = value;
+      const parsed = parseCurrency(value);
+      state.pricing[key] = parsed === '' ? '' : parsed;
+    }
+
+    function onPriceBlur(key) {
+      const value = state.pricing[key];
+      const el = document.getElementById(priceInputId(key));
+      if (!el) return;
+      el.value = value === '' ? '' : formatCurrency(value);
+      state.pricingInputs[key] = el.value;
+    }
+
+    function filterChips(value) {
+      state.chipFilter = value || '';
+      renderChips();
+    }
+
+    function validateBeforeSubmit() {
+      if (!state.items.length) {
+        showToast('Add at least one line item.');
+        return false;
+      }
+      const v1 = state.pricing.v1;
+      if (v1 === '' || !isFinite(v1) || v1 < 0) {
+        showToast('Enter a valid V1 Quotation amount.');
+        return false;
+      }
+      const badQty = state.items.find(item => !item.qty || !isFinite(item.qty) || item.qty < 1);
+      if (badQty) {
+        showToast('Each line item must have Qty ≥ 1.');
+        return false;
+      }
+      return true;
+    }
+
+    function submitQuotation(saveOnly) {
+      if (state.busy) return;
+      if (!validateBeforeSubmit()) return;
+      toggleBusy(true);
+      const payload = {
+        context: state.context,
+        items: state.items.map(item => ({
+          so: item.so || '',
+          productDescription: item.productDescription || '',
+          productDetails: item.productDetails || '',
+          qty: item.qty || 1
+        })),
+        pricing: {
+          v1: state.pricing.v1,
+          v2: state.pricing.v2,
+          approved: state.pricing.approved
+        },
+        saveOnly: !!saveOnly
+      };
+      google.script.run.withSuccessHandler(res => {
+        toggleBusy(false);
+        if (res && res.ok) {
+          showToast(saveOnly ? 'Values saved.' : 'Quotation saved.');
+          if (res.url) {
+            state.links.quotationUrl = { url: res.url };
+            renderLink();
+          }
+        } else {
+          showToast('Save completed with no response.');
+        }
+      }).withFailureHandler(err => {
+        toggleBusy(false);
+        showToast(err && err.message ? err.message : 'Failed to save.');
+      }).qc_submit(payload);
+    }
+
+    function toggleBusy(on) {
+      state.busy = !!on;
+      document.getElementById('btnGenerate').disabled = !!on;
+      document.getElementById('btnSaveOnly').disabled = !!on;
+    }
+
+    function showError(msg) {
+      const box = document.getElementById('errorBox');
+      box.textContent = msg || 'An error occurred.';
+      box.style.display = 'block';
+    }
+
+    function hideError() {
+      const box = document.getElementById('errorBox');
+      box.style.display = 'none';
+    }
+
+    let toastTimer = null;
+    function showToast(msg) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        el.classList.remove('show');
+      }, 2800);
+    }
+
+    function parseCurrency(value) {
+      if (value === '' || value == null) return '';
+      const num = parseFloat(String(value).replace(/[^0-9.\-]/g, ''));
+      return isFinite(num) ? num : '';
+    }
+
+    function formatCurrency(value) {
+      const n = Number(value);
+      if (!isFinite(n)) return '';
+      const sign = n < 0 ? '-' : '';
+      const abs = Math.abs(n);
+      const parts = abs.toFixed(2).split('.');
+      parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+      return sign + '$' + parts[0] + '.' + parts[1];
+    }
+
+    function makeId() {
+      return 'id-' + Math.random().toString(36).slice(2, 10);
+    }
+
+    function escapeHtml(str) {
+      return String(str || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    init();
+  </script>
+</body>
+</html>

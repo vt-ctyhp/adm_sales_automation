@@ -8,6 +8,11 @@ function onOpen(){
     .addSeparator()
     .addItem('Record Payment (wholesale)…', 'openWholesaleRecordPayment')
     .addItem('Payment Summary (selected SO)…', 'openWholesalePaymentSummary')
+    .addSubMenu(
+      SpreadsheetApp.getUi()
+        .createMenu('\ud83d\udccf Update Quotation')
+        .addItem('Create Quotation…', 'qc_openCreateQuotation')
+    )
     .addSeparator()
     .addItem('Refresh Config Cache', 'wh_refreshCaches')
     .addToUi();
