@@ -23,6 +23,15 @@
     details > summary { cursor:pointer; font-weight:600; }
     .hint { color:#777; }
     #debugBox { display:none; white-space:pre-wrap; background:#f8f8f8; border:1px dashed #bbb; padding:8px; margin-top:10px;}
+    #successPanel { display:none; position:fixed; inset:0; background:rgba(17,24,39,.55); z-index:999; align-items:center; justify-content:center; }
+    #successPanel.active { display:flex; }
+    #successCard { background:#fff; border-radius:12px; padding:20px 22px; width:420px; max-width:90vw; box-shadow:0 10px 30px rgba(0,0,0,.25); }
+    #successCard h3 { margin:0 0 10px; font-size:20px; }
+    #successDetails { display:grid; gap:6px; margin-top:8px; }
+    #successDetails div { display:flex; justify-content:space-between; gap:12px; font-size:13px; }
+    #successDetails span { font-weight:600; color:#374151; }
+    #successLinks { margin-top:12px; display:grid; gap:6px; }
+    #successLinks a { color:#1f6feb; text-decoration:none; word-break:break-word; font-size:13px; }
   </style>
 </head>
 <body>
@@ -177,7 +186,18 @@
 
   <div class="actions">
     <button onclick="google.script.host.close()">Cancel</button>
-    <button onclick="submit()">Save</button>
+    <button id="btnSave" onclick="submit()">Save</button>
+  </div>
+
+  <div id="successPanel">
+    <div id="successCard">
+      <h3>Saved ✓</h3>
+      <div id="successDetails"></div>
+      <div id="successLinks"></div>
+      <div class="actions" style="margin-top:16px; justify-content:flex-end;">
+        <button onclick="google.script.host.close()">Close</button>
+      </div>
+    </div>
   </div>
 
 <script>
@@ -192,6 +212,10 @@ const state = {
 };
 
 function $(id){ return document.getElementById(id); }
+function html(s){
+  const map = {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"};
+  return String(s==null?'':s).replace(/[&<>"']/g, c => map[c]);
+}
 function chip(so, sel){
   const s=document.createElement('span');
   s.className='chip'+(sel?' sel':''); s.textContent=so;
@@ -309,6 +333,9 @@ function submit(){
   if ((state.docType==='DEPOSIT_RECEIPT' || state.docType==='SALES_RECEIPT') && !(Number(state.pmt.amount||0)>0))
     return alert('Payment amount is required for receipts.');
 
+  const btn = $('btnSave');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
   const payload = {
     customerId: state.customerId, companyName: state.companyName, contactName: state.contactName, address: state.address, trackerUrl: state.trackerUrl,
     docType: state.docType,
@@ -331,15 +358,33 @@ function submit(){
   google.script.run.withSuccessHandler(res=>{
     console.debug('[ADM_DEBUG] wh_submitPayment result ->', res);
     if (res && res.ok) {
-      alert(`Saved.\nType: ${res.docType}\nDoc#: ${res.docNumber}${res.overageCredit?`\nUnapplied Credit: $${res.overageCredit.toFixed(2)}`:''}`);
-      google.script.host.close();
+      showSuccess(res);
     } else {
       alert('Save failed.');
+      if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
     }
   }).withFailureHandler(err=>{
     console.error('[ADM_DEBUG] wh_submitPayment error ->', err);
     alert('Error: ' + (err && err.message ? err.message : err));
+    if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
   }).wh_submitPayment(payload);
+}
+
+function showSuccess(res){
+  const panel = $('successPanel');
+  const details = $('successDetails');
+  const links = $('successLinks');
+  const rows = [];
+  if (res.docType) rows.push(`<div><span>Doc Type</span><div>${html(res.docType)}</div></div>`);
+  if (res.docNumber) rows.push(`<div><span>Doc #</span><div>${html(res.docNumber)}</div></div>`);
+  if (res.transactionId) rows.push(`<div><span>Transaction ID</span><div>${html(res.transactionId)}</div></div>`);
+  if (res.overageCredit) rows.push(`<div><span>Unapplied Credit</span><div>$${Number(res.overageCredit||0).toFixed(2)}</div></div>`);
+  details.innerHTML = rows.join('') || '<div><span>Status</span><div>Saved</div></div>';
+  const linkParts = [];
+  if (res.docUrl) linkParts.push(`<a target="_blank" rel="noopener" href="${html(res.docUrl)}">Open Google Doc</a>`);
+  if (res.pdfUrl) linkParts.push(`<a target="_blank" rel="noopener" href="${html(res.pdfUrl)}">Open PDF</a>`);
+  links.innerHTML = linkParts.join('');
+  panel.classList.add('active');
 }
 
 function boot(){
