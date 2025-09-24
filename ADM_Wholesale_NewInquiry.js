@@ -972,8 +972,32 @@ function admGenerateSalesReport(filters){
 
     const doc = DocumentApp.create(name);
     const body = doc.getBody();
-    body.appendParagraph('Sales Report').setHeading(DocumentApp.ParagraphHeading.HEADING1);
-    body.appendParagraph('Generated: ' + prettyStamp).setFontSize(10).setForegroundColor('#4b5563');
+
+    const POINTS_PER_INCH = 72;
+    body.setPageWidth(11 * POINTS_PER_INCH);
+    body.setPageHeight(8.5 * POINTS_PER_INCH);
+    const margin = 0.5 * POINTS_PER_INCH;
+    body.setMarginTop(margin);
+    body.setMarginBottom(margin);
+    body.setMarginLeft(margin);
+    body.setMarginRight(margin);
+    body.setAttributes({
+      [DocumentApp.Attribute.FONT_FAMILY]: 'Arial',
+      [DocumentApp.Attribute.FONT_SIZE]: 10,
+      [DocumentApp.Attribute.LINE_SPACING]: 1.15
+    });
+
+    const heading = body.appendParagraph('Sales Report')
+      .setHeading(DocumentApp.ParagraphHeading.HEADING1)
+      .setAlignment(DocumentApp.HorizontalAlignment.CENTER)
+      .setSpacingAfter(6);
+    heading.editAsText().setForegroundColor('#111827').setFontSize(20).setBold(true);
+
+    body.appendParagraph('Generated: ' + prettyStamp)
+      .setFontSize(10)
+      .setFontFamily('Arial')
+      .setForegroundColor('#4b5563')
+      .setAlignment(DocumentApp.HorizontalAlignment.CENTER);
 
     const summaryParts = [
       describeFilter_('Sales Stage', f.salesStage),
@@ -982,11 +1006,21 @@ function admGenerateSalesReport(filters){
       describeFilter_('In Production Status', f.inProductionStatus)
     ].filter(Boolean);
     const summaryText = summaryParts.length ? summaryParts.join(' | ') : 'None (all records)';
-    body.appendParagraph('Filters: ' + summaryText).setFontSize(10).setForegroundColor('#4b5563');
-    body.appendParagraph('Rows: ' + (rows.length || 0)).setFontSize(10).setForegroundColor('#4b5563');
+    const metaStyle = {
+      [DocumentApp.Attribute.FONT_SIZE]: 10,
+      [DocumentApp.Attribute.FONT_FAMILY]: 'Arial',
+      [DocumentApp.Attribute.FOREGROUND_COLOR]: '#4b5563'
+    };
+    body.appendParagraph('Filters: ' + summaryText)
+      .setAttributes(metaStyle)
+      .setSpacingAfter(2);
+    body.appendParagraph('Rows: ' + (rows.length || 0))
+      .setAttributes(metaStyle)
+      .setSpacingAfter(12);
 
     const table = body.appendTable([headers].concat(tableRows));
     table.setBorderWidth(0.5);
+    table.setBorderColor('#d1d5db');
     const headerRow = table.getRow(0);
     headerRow.setBackgroundColor('#1f2937');
     for (let i = 0; i < headerRow.getNumCells(); i++) {
@@ -995,12 +1029,36 @@ function admGenerateSalesReport(filters){
       const text = cell.getChild(0);
       if (text && text.editAsText) {
         const t = text.editAsText();
-        t.setBold(true).setForegroundColor('#ffffff');
+        t.setBold(true).setForegroundColor('#ffffff').setFontFamily('Arial');
+      }
+      cell.setPaddingTop(6);
+      cell.setPaddingBottom(6);
+      cell.setPaddingLeft(6);
+      cell.setPaddingRight(6);
+      if (text && text.getType && text.getType() === DocumentApp.ElementType.PARAGRAPH) {
+        text.asParagraph().setAlignment(DocumentApp.HorizontalAlignment.CENTER);
       }
     }
+    const rightAlign = new Set([7, 8]);
     for (let r = 1; r < table.getNumRows(); r++) {
+      const row = table.getRow(r);
       if (r % 2 === 1) {
-        table.getRow(r).setBackgroundColor('#f9fafb');
+        row.setBackgroundColor('#f9fafb');
+      }
+      for (let c = 0; c < row.getNumCells(); c++) {
+        const cell = row.getCell(c);
+        cell.setPaddingTop(6);
+        cell.setPaddingBottom(6);
+        cell.setPaddingLeft(6);
+        cell.setPaddingRight(6);
+        const child = cell.getChild(0);
+        if (child && child.editAsText) {
+          const text = child.editAsText();
+          text.setFontSize(10).setForegroundColor('#1f2937').setFontFamily('Arial');
+          if (rightAlign.has(c) && child.getType && child.getType() === DocumentApp.ElementType.PARAGRAPH) {
+            child.asParagraph().setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
+          }
+        }
       }
     }
 
