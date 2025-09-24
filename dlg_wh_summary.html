@@ -4,14 +4,47 @@
   <base target="_top">
   <meta charset="utf-8">
   <style>
-    body { font: 13px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Arial; margin:0; padding:16px; }
-    h2 { margin: 0 0 12px; }
-    .row { display:flex; gap:12px; align-items:center; margin-bottom:10px; }
-    input[type=text], select { padding:8px; }
-    table { width:100%; border-collapse:collapse; margin-top:6px; }
-    th, td { border:1px solid #ddd; padding:6px; text-align:left; }
-    th { background:#fafafa; }
-    .hint { color:#777; }
+    body { font: 13px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Arial; margin:0; padding:16px; background:#f3f4f6; color:#111827; }
+    h2 { margin: 0 0 16px; font-size:20px; font-weight:700; }
+    .row { display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; margin-bottom:16px; }
+    label { display:block; font-weight:600; color:#374151; margin-bottom:4px; font-size:12px; letter-spacing:0.01em; text-transform:uppercase; }
+    input[type=text], select { padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; min-width:140px; font-size:13px; }
+    input[type=text]:focus, select:focus { outline:none; border-color:#2563eb; box-shadow:0 0 0 3px rgba(37,99,235,0.15); }
+    button { padding:9px 16px; border:none; border-radius:6px; background:#2563eb; color:#fff; font-weight:600; cursor:pointer; }
+    button:hover { background:#1d4ed8; }
+    #out { display:flex; flex-direction:column; gap:16px; }
+    .hint { color:#6b7280; font-style:italic; }
+    .card { background:#fff; border-radius:10px; border:1px solid #e5e7eb; box-shadow:0 8px 16px -12px rgba(15,23,42,0.45); }
+    .totals { display:flex; flex-wrap:wrap; gap:12px; padding:16px; }
+    .totals span { font-weight:600; }
+    .totals .label { font-weight:500; color:#6b7280; margin-right:4px; }
+    .totals .balance.negative { color:#b91c1c; }
+    .totals .balance.positive { color:#047857; }
+    .warnings { background:#fffbeb; border:1px solid #fcd34d; border-radius:10px; padding:16px; color:#92400e; }
+    .warnings strong { display:block; font-size:14px; margin-bottom:8px; }
+    .warnings ul { margin:0; padding-left:18px; }
+    details.group { background:#fff; border-radius:10px; border:1px solid #e5e7eb; overflow:hidden; }
+    details.group + details.group { margin-top:8px; }
+    summary { list-style:none; cursor:pointer; padding:14px 16px; display:flex; flex-wrap:wrap; gap:12px; align-items:center; background:#f9fafb; font-weight:600; }
+    summary::-webkit-details-marker { display:none; }
+    .group-title { font-size:15px; font-weight:700; color:#111827; }
+    .group-meta { color:#4b5563; font-weight:500; }
+    .spacer { flex:1 1 auto; }
+    .badge { display:inline-flex; align-items:center; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; }
+    .badge.overdue { background:#fee2e2; color:#b91c1c; }
+    .group-body { padding:0 16px 16px; }
+    table.docs { width:100%; border-collapse:collapse; margin-top:12px; }
+    table.docs th { text-align:left; font-weight:600; color:#374151; font-size:12px; text-transform:uppercase; padding-bottom:8px; border-bottom:1px solid #e5e7eb; }
+    table.docs td { padding:8px 0; border-bottom:1px solid #f3f4f6; vertical-align:top; }
+    table.docs tr:last-child td { border-bottom:none; }
+    table.docs td.numeric { text-align:right; font-variant-numeric:tabular-nums; }
+    table.docs tbody tr.overdue td { background:#fef2f2; color:#b91c1c; }
+    table.docs tbody tr.overdue td a { color:#b91c1c; }
+    .group-warnings { margin-top:12px; background:#fffbeb; border:1px solid #fcd34d; border-radius:8px; padding:12px; color:#92400e; font-size:12px; }
+    .group-warnings ul { margin:6px 0 0 18px; padding:0; }
+    .empty { padding:24px; text-align:center; color:#6b7280; font-style:italic; }
+    a { color:#2563eb; text-decoration:none; }
+    a:hover { text-decoration:underline; }
   </style>
 </head>
 <body>
@@ -36,6 +69,28 @@
 <script>
 function $(s){ return document.querySelector(s); }
 
+const ENTITY_MAP = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;'
+};
+ENTITY_MAP['"'] = '&quot;';
+ENTITY_MAP["'"] = '&#39;';
+
+function safe(value){
+  if (value === null || value === undefined) return '';
+  return String(value).replace(/[&<>"']/g, c => ENTITY_MAP[c] || c);
+}
+
+function formatCurrency(value){
+  if (typeof value !== 'number' || !isFinite(value)) return '';
+  return new Intl.NumberFormat('en-US', { style:'currency', currency:'USD' }).format(value);
+}
+
+function formatList(items){
+  return items && items.length ? items.join(', ') : '—';
+}
+
 function refresh(){
   google.script.run.withSuccessHandler(render).wh_getSummary({
     scope: $('#scope').value,
@@ -46,24 +101,88 @@ function refresh(){
 }
 function render(res){
   console.debug('[ADM_DEBUG] summary ->', res);
-  if (!res || !res.items) { $('#out').textContent='No data.'; return; }
-  const rows = res.items.map(it=>`
-    <tr>
-      <td>${it.DOC_DATE || it.PaymentDateTime || ''}</td>
-      <td>${it.DocType||''} ${it.DocFlavor||''}</td>
-      <td>${it.DocNumber||''}</td>
-      <td>${it.InvoiceGroupID||''}</td>
-      <td>${it.SOsCSV||''}</td>
-      <td>${it.AmountGross||''}</td>
-      <td>${it.Method||''}</td>
-      <td>${it.DocStatus||''}</td>
-      <td>${it.PDF_URL?`<a href="${it.PDF_URL}" target="_blank">PDF</a>`:''}</td>
-    </tr>`).join('');
-  $('#out').innerHTML = `
-    <table>
-      <thead><tr><th>Date</th><th>Doc</th><th>Doc #</th><th>Group</th><th>SOs</th><th>Amount</th><th>Method</th><th>Status</th><th></th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="9" class="hint">No rows.</td></tr>'}</tbody>
-    </table>`;
+  if (!res || !Array.isArray(res.groups) || !res.groups.length) {
+    $('#out').classList.remove('hint');
+    $('#out').innerHTML = `<div class="card empty">No documents found for the selected scope.</div>`;
+    return;
+  }
+
+  const totals = res.totals || {};
+  const totalsHtml = `
+    <div class="card">
+      <div class="totals">
+        <span><span class="label">Invoiced:</span>${formatCurrency(totals.invoiced)}</span>
+        <span><span class="label">Receipts:</span>${formatCurrency(totals.receipts)}</span>
+        <span><span class="label">Credits Applied:</span>${formatCurrency(totals.creditsApplied)}</span>
+        <span><span class="label">Credits Issued:</span>${formatCurrency(totals.creditsIssued)}</span>
+        <span><span class="label">Outstanding:</span><span class="balance ${totals.balance > 0 ? 'negative' : 'positive'}">${formatCurrency(totals.balance)}</span></span>
+      </div>
+    </div>`;
+
+  const warningHtml = (res.warnings && res.warnings.length) ? `
+    <div class="warnings">
+      <strong>Warnings &amp; Alerts</strong>
+      <ul>${res.warnings.map(w => `<li>${safe(w)}</li>`).join('')}</ul>
+    </div>` : '';
+
+  const groupsHtml = res.groups.map(group => {
+    const docRows = group.docs && group.docs.length ? group.docs.map(doc => {
+      const rowClass = doc.isOverdue ? ' class="overdue"' : '';
+      return `
+        <tr${rowClass}>
+          <td>${safe(doc.displayDate || '')}</td>
+          <td>${safe(doc.docLabel || doc.docType || '')}</td>
+          <td>${safe(doc.docNumber || '')}</td>
+          <td>${safe(doc.docStatus || '')}</td>
+          <td>${safe(doc.dueDateDisplay || '')}</td>
+          <td class="numeric">${safe(formatCurrency(doc.amount))}</td>
+          <td>${safe(doc.method || '')}</td>
+          <td>${doc.pdfUrl ? `<a href="${safe(doc.pdfUrl)}" target="_blank">PDF</a>` : ''}</td>
+        </tr>`;
+    }).join('') : `<tr><td colspan="8" class="hint">No documents in this group.</td></tr>`;
+
+    const groupWarnings = group.warnings && group.warnings.length
+      ? `<div class="group-warnings"><strong>Group alerts</strong><ul>${group.warnings.map(w => `<li>${safe(w)}</li>`).join('')}</ul></div>`
+      : '';
+
+    const badges = [];
+    if (group.hasOverdue) badges.push('<span class="badge overdue">Overdue</span>');
+
+    return `
+      <details class="group" ${group.hasOverdue ? 'open' : ''}>
+        <summary>
+          <span class="group-title">${safe(group.label || 'Invoice Group')}</span>
+          <span class="group-meta">SOs: ${safe(formatList(group.soNumbers || []))}</span>
+          <span class="group-meta">Due Next: ${safe(group.nextDueDateDisplay || '—')}</span>
+          <span class="spacer"></span>
+          <span class="group-meta">Invoiced: ${safe(formatCurrency(group.totals?.invoiced))}</span>
+          <span class="group-meta">Received: ${safe(formatCurrency((group.totals?.receipts || 0) + (group.totals?.creditApplied || 0)))}</span>
+          <span class="group-meta">Balance: ${safe(formatCurrency(group.totals?.balance))}</span>
+          ${badges.join('')}
+        </summary>
+        <div class="group-body">
+          ${groupWarnings}
+          <table class="docs">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Document</th>
+                <th>Number</th>
+                <th>Status</th>
+                <th>Due</th>
+                <th class="numeric">Amount</th>
+                <th>Method</th>
+                <th>Links</th>
+              </tr>
+            </thead>
+            <tbody>${docRows}</tbody>
+          </table>
+        </div>
+      </details>`;
+  }).join('');
+
+  $('#out').classList.remove('hint');
+  $('#out').innerHTML = `${warningHtml}${totalsHtml}${groupsHtml}`;
 }
 google.script.run.withSuccessHandler(({ctx})=>{
   if (ctx && ctx.soNumber) $('#so').value = ctx.soNumber;
