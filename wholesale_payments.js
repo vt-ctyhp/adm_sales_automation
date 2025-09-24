@@ -795,6 +795,7 @@ function wh_applyReceiptToOrders_(allocMap){
     const vals = sh.getRange(2,1,lr-1,lc).getValues();
     let touched = false;
     const touchLog = debugging ? [] : null;
+    const writesByRow = new Map();
 
     const cellWithinRange_ = (range, rowIndex, columnIndex) => {
       if (!range || !rowIndex || !columnIndex) return false;
@@ -912,6 +913,9 @@ function wh_applyReceiptToOrders_(allocMap){
         r[cPTD-1] = next;
         touched = true;
         rowTouched = true;
+        const sheetRowIndex = i + 2;
+        if (!writesByRow.has(sheetRowIndex)) writesByRow.set(sheetRowIndex, new Map());
+        writesByRow.get(sheetRowIndex).set(cPTD, next);
         if (debugging) {
           rowLog.updates.push({
             columnIndex: cPTD,
@@ -929,6 +933,9 @@ function wh_applyReceiptToOrders_(allocMap){
         r[cRB-1] = next;
         touched=true;
         rowTouched = true;
+        const sheetRowIndex = i + 2;
+        if (!writesByRow.has(sheetRowIndex)) writesByRow.set(sheetRowIndex, new Map());
+        writesByRow.get(sheetRowIndex).set(cRB, next);
         if (debugging) {
           rowLog.updates.push({
             columnIndex: cRB,
@@ -949,6 +956,46 @@ function wh_applyReceiptToOrders_(allocMap){
     }
 
     const range = sh.getRange(2,1,lr-1,lc);
+    const plannedSegments = [];
+    const rowIndices = Array.from(writesByRow.keys()).sort((a,b)=>a-b);
+    rowIndices.forEach(rowIndex => {
+      const colEntries = Array.from(writesByRow.get(rowIndex).entries()).sort((a,b)=>a[0]-b[0]);
+      let segmentStart = null;
+      let segmentValues = [];
+      let segmentColumns = [];
+      let prevCol = null;
+      const commitSegment = () => {
+        if (!segmentValues.length) return;
+        plannedSegments.push({
+          rowIndex,
+          startColumn: segmentStart,
+          columnCount: segmentValues.length,
+          columnIndices: segmentColumns.slice(),
+          values: segmentValues.slice()
+        });
+        segmentStart = null;
+        segmentValues = [];
+        segmentColumns = [];
+      };
+      colEntries.forEach(([colIndex, value]) => {
+        if (segmentStart === null) {
+          segmentStart = colIndex;
+          segmentValues = [value];
+          segmentColumns = [colIndex];
+        } else if (prevCol !== null && colIndex === prevCol + 1) {
+          segmentValues.push(value);
+          segmentColumns.push(colIndex);
+        } else {
+          commitSegment();
+          segmentStart = colIndex;
+          segmentValues = [value];
+          segmentColumns = [colIndex];
+        }
+        prevCol = colIndex;
+      });
+      commitSegment();
+    });
+
     if (debugging){
       dbg('wh_applyReceiptToOrders_: attempting write', {
         sheet: tab,
@@ -956,12 +1003,16 @@ function wh_applyReceiptToOrders_(allocMap){
         rows: lr-1,
         columns: lc,
         headers: hdr,
-        touches: touchLog
+        touches: touchLog,
+        segments: plannedSegments
       });
     }
 
     try {
-      range.setValues(vals);
+      plannedSegments.forEach(segment => {
+        const targetRange = sh.getRange(segment.rowIndex, segment.startColumn, 1, segment.columnCount);
+        targetRange.setValues([segment.values]);
+      });
     } catch (err) {
       if (debugging) {
         const cellDiagnostics = [];
