@@ -611,17 +611,133 @@ function wh_applyReceiptToOrders_(allocMap){
     const cOT  = pickH_(H, OT_ALIASES);
     const cRB  = pickH_(H, RB_ALIASES);
 
-    const vals = sh.getRange(2,1,lr-1,lc).getValues();
+    const dataRange = sh.getRange(2,1,lr-1,lc);
+    const vals = dataRange.getValues();
+    const touchLog = { sheet: tab, rangeA1: dataRange.getA1Notation(), updates: [] };
     let touched = false;
     for (let i=0;i<vals.length;i++){
       const r = vals[i];
       const so = String(r[cSO-1]||'').trim(); if (!so || !(so in allocMap)) continue;
       const add = num_(allocMap[so],0); if (add<=0) continue;
-      if (cPTD){ const cur = num_(r[cPTD-1],0); r[cPTD-1] = cur + add; touched = true; }
-      if (cRB && cOT && cPTD){ const ot=num_(r[cOT-1],0); const ptd=num_(r[cPTD-1],0); r[cRB-1] = Math.max(0, round2_(ot-ptd)); touched=true; }
+      const rowUpdate = { row: i+2, so, changes: [] };
+      if (cPTD){
+        const cur = num_(r[cPTD-1],0);
+        const next = cur + add;
+        r[cPTD-1] = next;
+        rowUpdate.changes.push({
+          column: cPTD,
+          header: hdr[cPTD-1] || '',
+          before: cur,
+          after: next
+        });
+        touched = true;
+      }
+      if (cRB && cOT && cPTD){
+        const prev = num_(r[cRB-1],0);
+        const ot=num_(r[cOT-1],0);
+        const ptd=num_(r[cPTD-1],0);
+        const next = Math.max(0, round2_(ot-ptd));
+        r[cRB-1] = next;
+        rowUpdate.changes.push({
+          column: cRB,
+          header: hdr[cRB-1] || '',
+          before: prev,
+          after: next,
+          basis: { orderTotal: ot, paidToDate: ptd }
+        });
+        touched = touched || (next !== prev);
+      }
+      if (rowUpdate.changes.length){
+        touchLog.updates.push(rowUpdate);
+      }
       vals[i] = r;
     }
-    if (touched) sh.getRange(2,1,lr-1,lc).setValues(vals);
+    if (touched){
+      try {
+        dataRange.setValues(vals);
+      } catch (err) {
+        if (ADM_isDebug()){
+          try {
+            const cellDiagnostics = (function(){
+              const rowColumnMap = new Map();
+              (touchLog.updates||[]).forEach(upd => {
+                const key = upd.row;
+                if (!rowColumnMap.has(key)) rowColumnMap.set(key, new Set());
+                (upd.changes||[]).forEach(ch => {
+                  if (ch && ch.column){ rowColumnMap.get(key).add(ch.column); }
+                });
+              });
+              const rows = Array.from(rowColumnMap.keys()).sort((a,b)=>a-b);
+              const protections = (typeof sh.getProtections === 'function')
+                ? sh.getProtections(SpreadsheetApp.ProtectionType.RANGE) || []
+                : [];
+              const blockingProtections = protections.filter(p => {
+                try { return p && !p.isWarningOnly(); }
+                catch (_) { return true; }
+              });
+              const intersects = (row,col) => blockingProtections.some(p => {
+                try {
+                  const rng = p.getRange();
+                  if (!rng) return false;
+                  return row >= rng.getRow() && row <= rng.getLastRow()
+                      && col >= rng.getColumn() && col <= rng.getLastColumn();
+                } catch (_) {
+                  return false;
+                }
+              });
+              return rows.map(row => {
+                const touchedCols = rowColumnMap.get(row) || new Set();
+                const rowRange = sh.getRange(row,1,1,lc);
+                const columns = [];
+                for (let col=1; col<=lc; col++){
+                  const cell = rowRange.getCell(1,col);
+                  let formula = '';
+                  let formulaError = '';
+                  try { formula = cell.getFormula(); }
+                  catch (e) { formulaError = String(e && e.message ? e.message : e || ''); }
+                  let dataSourceFormula = '';
+                  let dataSourceError = '';
+                  try { dataSourceFormula = cell.getDataSourceFormula(); }
+                  catch (e) { dataSourceError = String(e && e.message ? e.message : e || ''); }
+                  const protectedCell = intersects(row,col);
+                  const colInfo = {
+                    column: col,
+                    header: hdr[col-1] || '',
+                    touched: touchedCols.has(col),
+                    hasFormula: !!formula,
+                    hasDataSourceFormula: !!dataSourceFormula,
+                    isProtected: protectedCell
+                  };
+                  if (formula) colInfo.formula = formula;
+                  if (formulaError) colInfo.formulaError = formulaError;
+                  if (dataSourceFormula) colInfo.dataSourceFormula = dataSourceFormula;
+                  if (dataSourceError) colInfo.dataSourceError = dataSourceError;
+                  columns.push(colInfo);
+                }
+                const match = (touchLog.updates||[]).find(upd => upd.row === row);
+                const rowInfo = { row, columns };
+                if (match && match.so) rowInfo.so = match.so;
+                return rowInfo;
+              });
+            })();
+            dbg('wh_applyReceiptToOrders_: setValues failure', {
+              sheet: tab,
+              error: err && err.message ? String(err.message) : String(err),
+              touchLog,
+              cellDiagnostics
+            });
+          } catch (diagErr) {
+            dbg('wh_applyReceiptToOrders_: setValues failure (diagnostics error)', {
+              sheet: tab,
+              error: err && err.message ? String(err.message) : String(err),
+              diagnosticsError: diagErr && diagErr.message ? String(diagErr.message) : String(diagErr),
+              touchLog
+            });
+          }
+        }
+        throw err;
+      }
+    }
   }
 }
 
