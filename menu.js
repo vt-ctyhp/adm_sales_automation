@@ -1,4 +1,3 @@
-
 /*** PUBLIC — menu & open dialog ***/
 function onOpen(){
   SpreadsheetApp.getUi()
