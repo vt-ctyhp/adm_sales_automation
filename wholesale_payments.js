@@ -675,10 +675,15 @@ function wh_markSuperseded_(docNumber, action){
 // ============================= SUMMARY =============================
 function wh_getSummary(params){
   params = params || {};
+  const debugging = ADM_isDebug();
   let scope = String(params.scope||'').trim().toUpperCase();
   let soNumber = String(params.soNumber||'').trim();
   let customerId = String(params.customerId||'').trim();
   let invoiceGroupId = String(params.invoiceGroupId||'').trim();
+
+  if (debugging) {
+    dbg('wh_getSummary: start', { params, scope, soNumber, customerId, invoiceGroupId });
+  }
 
   if (!soNumber || !customerId) {
     const ctx = readActiveContext_();
@@ -706,15 +711,27 @@ function wh_getSummary(params){
     scope = 'SO';
   }
 
+  if (debugging) {
+    dbg('wh_getSummary: resolved scope', { scope, soNumber, customerId, invoiceGroupId });
+  }
+
   const sh = ensureLedger_();
   const lr = sh.getLastRow(), lc = sh.getLastColumn();
   if (lr < 2) {
+    if (debugging) {
+      dbg('wh_getSummary: ledger empty', { lastRow: lr, lastColumn: lc });
+    }
     return { scope, items:[], totals:{}, groups:[], warnings:[] };
   }
 
   const hdr = sh.getRange(1,1,1,lc).getDisplayValues()[0].map(s=>String(s||'').trim());
   const H = headerMap_(hdr);
   const vals = sh.getRange(2,1,lr-1,lc).getValues();
+
+  if (debugging) {
+    dbg('wh_getSummary: ledger headers loaded', { headerCount: hdr.length, headers: hdr });
+    dbg('wh_getSummary: scanning rows', { rowCount: vals.length });
+  }
 
   const items = [];
   const tz = Session.getScriptTimeZone() || 'UTC';
@@ -738,13 +755,57 @@ function wh_getSummary(params){
     const ledgerSOs = parseSummarySOList_(raw);
     const ledgerCustomerIds = parseSummaryCustomerIds_(raw);
     const ledgerGroupId = String(raw.InvoiceGroupID||'').trim();
-    const match = scope==='SO'
-      ? (soQuery ? ledgerSOs.some(so => soEq_(so, soQuery)) : false)
-      : scope==='CUSTOMER'
-        ? (customerId ? ledgerCustomerIds.some(id => idEq_(id, customerId)) : false)
-        : scope==='GROUP'
-          ? (invoiceGroupId ? idEq_(ledgerGroupId, invoiceGroupId) : false)
-          : false;
+    let match = false;
+    let matchReason = '';
+
+    if (scope === 'SO') {
+      if (!soQuery) {
+        matchReason = 'SO scope but soNumber missing';
+      } else if (ledgerSOs.some(so => soEq_(so, soQuery))) {
+        match = true;
+        matchReason = 'SO matched';
+      } else {
+        matchReason = 'SO mismatch';
+      }
+    } else if (scope === 'CUSTOMER') {
+      if (!customerId) {
+        matchReason = 'CUSTOMER scope but customerId missing';
+      } else if (ledgerCustomerIds.some(id => idEq_(id, customerId))) {
+        match = true;
+        matchReason = 'Customer matched';
+      } else {
+        matchReason = 'Customer mismatch';
+      }
+    } else if (scope === 'GROUP') {
+      if (!invoiceGroupId) {
+        matchReason = 'GROUP scope but invoiceGroupId missing';
+      } else if (idEq_(ledgerGroupId, invoiceGroupId)) {
+        match = true;
+        matchReason = 'Group matched';
+      } else {
+        matchReason = 'Group mismatch';
+      }
+    }
+
+    if (debugging) {
+      const dbgRow = {
+        rowIndex: i + 2,
+        paymentId: raw.PaymentID || '',
+        docNumber: raw.DocNumber || '',
+        docType: raw.DocType || '',
+        ledgerSOs,
+        ledgerCustomerIds,
+        ledgerGroupId,
+        scope,
+        soQuery,
+        customerId,
+        invoiceGroupId,
+        match,
+        matchReason
+      };
+      dbg('wh_getSummary: ledger row inspected', dbgRow);
+    }
+
     if (!match) continue;
 
     items.push(raw);
@@ -927,12 +988,24 @@ function wh_getSummary(params){
     balance: round2_(globalTotals.invoiced - (globalTotals.receipts + globalTotals.creditsApplied))
   };
 
+  const warnings = dedupeSummaryWarnings_(generalWarnings);
+
+  if (debugging) {
+    dbg('wh_getSummary: summary built', {
+      scope,
+      itemCount: items.length,
+      groupCount: groups.length,
+      totals,
+      warnings
+    });
+  }
+
   return {
     scope,
     items,
     totals,
     groups,
-    warnings: dedupeSummaryWarnings_(generalWarnings)
+    warnings
   };
 }
 
