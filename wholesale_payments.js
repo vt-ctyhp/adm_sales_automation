@@ -796,6 +796,100 @@ function wh_applyReceiptToOrders_(allocMap){
     let touched = false;
     const touchLog = debugging ? [] : null;
 
+    const cellWithinRange_ = (range, rowIndex, columnIndex) => {
+      if (!range || !rowIndex || !columnIndex) return false;
+      try {
+        const startRow = range.getRow();
+        const startCol = range.getColumn();
+        const endRow = startRow + range.getNumRows() - 1;
+        const endCol = startCol + range.getNumColumns() - 1;
+        return rowIndex >= startRow && rowIndex <= endRow &&
+               columnIndex >= startCol && columnIndex <= endCol;
+      } catch (err) {
+        return false;
+      }
+    };
+
+    const intersectingProtections = (rowIndex, columnIndex) => {
+      const out = { isProtected: false, hits: [] };
+      if (!rowIndex || !columnIndex) return out;
+
+      let errorMessage = '';
+      try {
+        const { ProtectionType } = SpreadsheetApp;
+        const cell = sh.getRange(rowIndex, columnIndex);
+
+        if (cell && typeof cell.getProtections === 'function') {
+          const rangeProtections = cell.getProtections(ProtectionType.RANGE) || [];
+          rangeProtections.forEach(p => {
+            let canEdit = null;
+            try {
+              canEdit = typeof p.canEdit === 'function' ? !!p.canEdit() : null;
+            } catch (_) {
+              canEdit = null;
+            }
+            if (canEdit) return;
+
+            const range = typeof p.getRange === 'function' ? p.getRange() : null;
+            out.hits.push({
+              type: 'RANGE',
+              description: typeof p.getDescription === 'function' ? (p.getDescription() || '') : '',
+              a1: range && typeof range.getA1Notation === 'function' ? range.getA1Notation() : null,
+              canEdit
+            });
+          });
+        }
+
+        const sheetProtections = (typeof sh.getProtections === 'function')
+          ? (sh.getProtections(ProtectionType.SHEET) || [])
+          : [];
+        const blockingSheetProtections = Array.isArray(sheetProtections) ? sheetProtections : [];
+
+        blockingSheetProtections.forEach(p => {
+          let canEdit = null;
+          try {
+            canEdit = typeof p.canEdit === 'function' ? !!p.canEdit() : null;
+          } catch (_) {
+            canEdit = null;
+          }
+          if (canEdit) return;
+
+          let unprotectedRanges = [];
+          try {
+            unprotectedRanges = typeof p.getUnprotectedRanges === 'function'
+              ? (p.getUnprotectedRanges() || [])
+              : [];
+          } catch (_) {
+            unprotectedRanges = [];
+          }
+
+          const withinUnprotected = (unprotectedRanges || []).some(range => cellWithinRange_(range, rowIndex, columnIndex));
+          if (withinUnprotected) return;
+
+          out.hits.push({
+            type: 'SHEET',
+            description: typeof p.getDescription === 'function' ? (p.getDescription() || '') : '',
+            canEdit,
+            unprotectedRanges: Array.isArray(unprotectedRanges) ? unprotectedRanges.length : 0
+          });
+        });
+
+        out.isProtected = out.hits.length > 0;
+      } catch (innerErr) {
+        errorMessage = String(innerErr && innerErr.message || innerErr || '');
+      }
+
+      if (errorMessage) {
+        return {
+          isProtected: null,
+          hits: [],
+          error: errorMessage
+        };
+      }
+
+      return out;
+    };
+
     for (let i=0;i<vals.length;i++){
       const r = vals[i];
       const so = String(r[cSO-1]||'').trim(); if (!so || !(so in allocMap)) continue;
@@ -880,7 +974,8 @@ function wh_applyReceiptToOrders_(allocMap){
               seen[key] = true;
               const cell = sh.getRange(rowInfo.rowIndex, update.columnIndex);
               const formula = cell.getFormula();
-              cellDiagnostics.push({
+              const protectionDetails = intersectingProtections(rowInfo.rowIndex, update.columnIndex);
+              const diag = {
                 rowIndex: rowInfo.rowIndex,
                 columnIndex: update.columnIndex,
                 columnName: update.columnName,
@@ -888,7 +983,15 @@ function wh_applyReceiptToOrders_(allocMap){
                 hasFormula: !!formula,
                 isBlank: cell.isBlank(),
                 note: cell.getNote() || null
-              });
+              };
+              if (protectionDetails) {
+                diag.isProtected = protectionDetails.isProtected;
+                if (protectionDetails.error) diag.protectionError = protectionDetails.error;
+                if (protectionDetails.hits && protectionDetails.hits.length) {
+                  diag.protections = protectionDetails.hits;
+                }
+              }
+              cellDiagnostics.push(diag);
             });
           });
         } catch (inner){
