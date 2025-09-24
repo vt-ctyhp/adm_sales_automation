@@ -26,6 +26,8 @@
       padding: 18px 22px 70px;
       display: grid;
       gap: 16px;
+      max-width: 1180px;
+      margin: 0 auto;
     }
     .header {
       display: flex;
@@ -49,10 +51,18 @@
     .grid {
       display: grid;
       gap: 16px;
-      grid-template-columns: 280px 1fr 260px;
+      grid-template-columns: minmax(260px, 320px) minmax(480px, 1fr);
+      align-items: start;
+    }
+    .detail-grid {
+      display: grid;
+      gap: 16px;
+      grid-template-columns: minmax(520px, 2.25fr) minmax(220px, 1fr);
+      align-items: start;
     }
     @media (max-width: 1180px) {
       .grid { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+      .detail-grid { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
     }
     .card {
       background: #fff;
@@ -171,6 +181,9 @@
       color: #b91c1c;
     }
     .mini-btn.danger:hover { background: #fecaca; }
+    .table-wrap {
+      overflow-x: auto;
+    }
     .hint {
       font-size: 12px;
       color: #6b7280;
@@ -279,47 +292,49 @@
         </div>
       </section>
 
-      <section class="card" id="colItems">
-        <div class="header" style="margin:0; align-items:center;">
-          <h3 style="margin:0;">Line Items</h3>
-          <button type="button" class="mini-btn" onclick="addCustomRow()">+ Add Row</button>
-        </div>
-        <div class="hint">SO column is locked for selected orders. Custom rows allow blank SOs.</div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th style="width:120px;">SO#</th>
-                <th>Product Description</th>
-                <th>Product Details</th>
-                <th style="width:60px;">Qty</th>
-                <th style="width:40px;"></th>
-              </tr>
-            </thead>
-            <tbody id="itemRows"></tbody>
-          </table>
-        </div>
-      </section>
+      <div class="detail-grid">
+        <section class="card" id="colItems">
+          <div class="header" style="margin:0; align-items:center;">
+            <h3 style="margin:0;">Line Items</h3>
+            <button type="button" class="mini-btn" onclick="addCustomRow()">+ Add Row</button>
+          </div>
+          <div class="hint">SO column is locked for selected orders. Custom rows allow blank SOs.</div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width:120px;">SO#</th>
+                  <th>Product Description</th>
+                  <th>Product Details</th>
+                  <th style="width:60px;">Qty</th>
+                  <th style="width:40px;"></th>
+                </tr>
+              </thead>
+              <tbody id="itemRows"></tbody>
+            </table>
+          </div>
+        </section>
 
-      <section class="card" id="colPricing">
-        <h3>Pricing</h3>
-        <div class="hint">Enter currency values. Formatting is applied automatically.</div>
-        <div class="pricing-grid">
-          <div class="field">
-            <label>V1 Quotation <span style="color:#ef4444;">*</span></label>
-            <input id="priceV1" class="currency-input" type="text" placeholder="$0.00" oninput="onPriceInput('v1', this.value)" onblur="onPriceBlur('v1')">
+        <section class="card" id="colPricing">
+          <h3>Pricing</h3>
+          <div class="hint">Enter currency values. Formatting is applied automatically.</div>
+          <div class="pricing-grid">
+            <div class="field">
+              <label>V1 Quotation <span style="color:#ef4444;">*</span></label>
+              <input id="priceV1" class="currency-input" type="text" placeholder="$0.00" oninput="onPriceInput('v1', this.value)" onblur="onPriceBlur('v1')">
+            </div>
+            <div class="field">
+              <label>V2 Quotation</label>
+              <input id="priceV2" class="currency-input" type="text" placeholder="$0.00" oninput="onPriceInput('v2', this.value)" onblur="onPriceBlur('v2')">
+            </div>
+            <div class="field">
+              <label>Approved Price</label>
+              <input id="priceApproved" class="currency-input" type="text" placeholder="$0.00" oninput="onPriceInput('approved', this.value)" onblur="onPriceBlur('approved')">
+            </div>
           </div>
-          <div class="field">
-            <label>V2 Quotation</label>
-            <input id="priceV2" class="currency-input" type="text" placeholder="$0.00" oninput="onPriceInput('v2', this.value)" onblur="onPriceBlur('v2')">
-          </div>
-          <div class="field">
-            <label>Approved Price</label>
-            <input id="priceApproved" class="currency-input" type="text" placeholder="$0.00" oninput="onPriceInput('approved', this.value)" onblur="onPriceBlur('approved')">
-          </div>
-        </div>
-        <div class="hint" id="currencyHint"></div>
-      </section>
+          <div class="hint" id="currencyHint"></div>
+        </section>
+      </div>
     </div>
 
     <div class="actions">
