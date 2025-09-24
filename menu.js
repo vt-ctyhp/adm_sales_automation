@@ -2,16 +2,16 @@
 /*** PUBLIC — menu & open dialog ***/
 function onOpen(){
   SpreadsheetApp.getUi()
-    .createMenu('ADM Wholesale')
-    .addItem('New Inquiry / Create SO','admOpenNewInquiryDialog')
+    .createMenu('🛍️ ADM Wholesale')
+    .addItem('🆕 New Inquiry / Create SO','admOpenNewInquiryDialog')
     .addItem('➕ Add New Customer','admOpenNewCustomerDialog')
     .addSeparator()
-    .addItem('Update Client Status…','admOpenClientStatusDialog')
+    .addItem('🔄 Update Client Status…','admOpenClientStatusDialog')
     .addSeparator()
-    .addItem('Record Payment (wholesale)…', 'openWholesaleRecordPayment')
-    .addItem('Payment Summary (selected SO)…', 'openWholesalePaymentSummary')
+    .addItem('💳 Record Payment (Wholesale)…', 'openWholesaleRecordPayment')
+    .addItem('📊 Payment Summary (Selected SO)…', 'openWholesalePaymentSummary')
     .addSeparator()
-    .addItem('Refresh Config Cache', 'wh_refreshCaches')
+    .addItem('♻️ Refresh Config Cache', 'wh_refreshCaches')
     .addToUi();
 }
 
