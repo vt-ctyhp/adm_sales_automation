@@ -1006,14 +1006,27 @@ function trackerIdFromUrl_(url){
   return m ? m[0] : '';
 }
 
+function trackerTabName_(soDisplay){
+  const base = soDisplay || 'SO';
+  return base + ' 3D Tracker';
+}
+
 function updateCustomerTrackerSheet_(trackerUrl, customerName, product, soDisplay, payload){
   const id = trackerIdFromUrl_(trackerUrl);
   if (!id) return '';
   const ss = SpreadsheetApp.openById(id);
-  const tabName = soDisplay || 'SO';
-  let sheet = ss.getSheetByName(tabName);
+  const preferredName = trackerTabName_(soDisplay);
+  const legacyName = soDisplay || 'SO';
+  let sheet = ss.getSheetByName(preferredName);
+  if (!sheet && legacyName && legacyName !== preferredName) {
+    sheet = ss.getSheetByName(legacyName);
+    if (sheet) {
+      try { sheet.setName(preferredName); }
+      catch (_) {}
+    }
+  }
   if (!sheet) {
-    sheet = ss.insertSheet(tabName);
+    sheet = ss.insertSheet(preferredName);
   } else {
     sheet.clearContents();
   }
@@ -1035,7 +1048,7 @@ function updateCustomerTrackerSheet_(trackerUrl, customerName, product, soDispla
   try {
     sheet.autoResizeColumns(1, 2);
   } catch (_) {}
-  return tabName;
+  return sheet.getName();
 }
 
 function admSubmitStatusUpdate(payload){
