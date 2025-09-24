@@ -685,8 +685,9 @@ function wh_getSummary(params){
     dbg('wh_getSummary: start', { params, scope, soNumber, customerId, invoiceGroupId });
   }
 
+  let ctx = null;
   if (!soNumber || !customerId) {
-    const ctx = readActiveContext_();
+    ctx = readActiveContext_();
     if (!soNumber && ctx.soNumber) soNumber = String(ctx.soNumber||'').trim();
     if (!customerId && ctx.customerId) customerId = String(ctx.customerId||'').trim();
   }
@@ -745,6 +746,10 @@ function wh_getSummary(params){
     creditsIssued: 0,
     creditsApplied: 0
   };
+  const matchedCustomerIds = new Set();
+  const matchedBusinessNames = new Set();
+  const matchedInvoiceGroups = new Set();
+  const matchedSoNumbers = new Set();
 
   for (let i=0;i<vals.length;i++){
     const r = vals[i];
@@ -814,6 +819,18 @@ function wh_getSummary(params){
 
     if (!match) continue;
 
+    ledgerCustomerIds.forEach(id => {
+      const val = String(id||'').trim();
+      if (val) matchedCustomerIds.add(val);
+    });
+    soNumbers.forEach(so => {
+      const val = String(so||'').trim();
+      if (val) matchedSoNumbers.add(val);
+    });
+    if (ledgerGroupId) matchedInvoiceGroups.add(String(ledgerGroupId||'').trim());
+    const businessName = extractSummaryBusinessName_(raw);
+    if (businessName) matchedBusinessNames.add(businessName);
+
     items.push(raw);
 
     const docFlavor = String(raw.DocFlavor||'');
@@ -879,6 +896,10 @@ function wh_getSummary(params){
     }
     soNumbers.forEach(so => { if (so) group.soNumbers.add(so); });
 
+    if (docOut.invoiceGroupId) {
+      matchedInvoiceGroups.add(docOut.invoiceGroupId);
+    }
+
     if (docOut.isInvoice) {
       group.totals.invoiced = round2_(group.totals.invoiced + amount);
       globalTotals.invoiced = round2_(globalTotals.invoiced + amount);
@@ -907,6 +928,23 @@ function wh_getSummary(params){
     }
   }
 
+  if (!matchedBusinessNames.size) {
+    try {
+      ctx = ctx || readActiveContext_();
+    } catch (_) {}
+    if (ctx && ctx.companyName) {
+      const company = String(ctx.companyName||'').trim();
+      if (company) matchedBusinessNames.add(company);
+    }
+  }
+  if (!matchedBusinessNames.size && customerId) {
+    const crm = findCrmRow_(customerId, '');
+    if (crm && crm.companyName) {
+      const company = String(crm.companyName||'').trim();
+      if (company) matchedBusinessNames.add(company);
+    }
+  }
+
   const groups = [];
   const generalWarnings = [];
 
@@ -914,6 +952,7 @@ function wh_getSummary(params){
     const soNumbers = Array.from(group.soNumbers).filter(Boolean).sort();
     const balance = round2_(group.totals.invoiced - (group.totals.receipts + group.totals.creditApplied));
     const dueDateMsList = group.dueDates.map(d=>d.getTime()).sort((a,b)=>a-b);
+    const nextDueMs = dueDateMsList.length ? dueDateMsList[0] : null;
     const overdueDocs = group.docs.filter(doc => doc.isInvoice && doc.isActiveInvoice && doc.dueDateMs && doc.dueDateMs < nowMs);
     const hasOverdue = balance > 0 && overdueDocs.length > 0;
     const oldestOverdueMs = overdueDocs.length ? Math.min.apply(null, overdueDocs.map(doc=>doc.dueDateMs)) : null;
@@ -928,6 +967,14 @@ function wh_getSummary(params){
     });
 
     const groupLabel = group.invoiceGroupId || (soNumbers.length ? `SO ${soNumbers.join(', ')}` : 'Ungrouped');
+    const docsSorted = group.docs.slice().sort((a,b) => {
+      const aDue = typeof a.dueDateMs === 'number' ? a.dueDateMs : Number.POSITIVE_INFINITY;
+      const bDue = typeof b.dueDateMs === 'number' ? b.dueDateMs : Number.POSITIVE_INFINITY;
+      if (aDue !== bDue) return aDue - bDue;
+      const aActivity = typeof a.activityMs === 'number' ? a.activityMs : 0;
+      const bActivity = typeof b.activityMs === 'number' ? b.activityMs : 0;
+      return aActivity - bActivity;
+    });
 
     groups.push({
       key: group.key,
@@ -943,10 +990,12 @@ function wh_getSummary(params){
       },
       hasOverdue,
       oldestOverdueDisplay,
-      nextDueDateDisplay: dueDateMsList.length ? formatDateForSummary_(new Date(dueDateMsList[0]), tz) : '',
+      nextDueDateDisplay: nextDueMs ? formatDateForSummary_(new Date(nextDueMs), tz) : '',
+      nextDueDateMs: nextDueMs || null,
+      nextDueDateIso: nextDueMs ? new Date(nextDueMs).toISOString() : '',
       latestActivityMs: group.latestActivityMs || 0,
       warnings: group.warnings.slice(),
-      docs: group.docs.map(doc => ({
+      docs: docsSorted.map(doc => ({
         docType: doc.docType,
         docFlavor: doc.docFlavor,
         docLabel: doc.docLabel,
@@ -979,7 +1028,12 @@ function wh_getSummary(params){
     }
   });
 
-  groups.sort((a,b)=> (b.latestActivityMs||0) - (a.latestActivityMs||0));
+  groups.sort((a,b)=> {
+    const aDue = typeof a.nextDueDateMs === 'number' ? a.nextDueDateMs : Number.POSITIVE_INFINITY;
+    const bDue = typeof b.nextDueDateMs === 'number' ? b.nextDueDateMs : Number.POSITIVE_INFINITY;
+    if (aDue !== bDue) return aDue - bDue;
+    return (b.latestActivityMs||0) - (a.latestActivityMs||0);
+  });
 
   activeInvoicesBySO.forEach((docs, so) => {
     if (docs.length <= 1) return;
@@ -1023,6 +1077,32 @@ function wh_getSummary(params){
     });
   });
 
+  const natSort = (a,b) => String(a||'').localeCompare(String(b||''), undefined, { numeric: true, sensitivity: 'base' });
+  const summarySoNumbers = Array.from(matchedSoNumbers).filter(Boolean).sort(natSort);
+  if (!summarySoNumbers.length && soNumber) summarySoNumbers.push(soNumber);
+  const summaryCustomerIds = Array.from(matchedCustomerIds).filter(Boolean).sort(natSort);
+  if (!summaryCustomerIds.length && customerId) summaryCustomerIds.push(customerId);
+  const summaryInvoiceGroups = Array.from(matchedInvoiceGroups).filter(Boolean).sort(natSort);
+  if (!summaryInvoiceGroups.length && invoiceGroupId) summaryInvoiceGroups.push(invoiceGroupId);
+  const summaryBusinessNames = Array.from(matchedBusinessNames).filter(Boolean).sort((a,b)=>String(a||'').localeCompare(String(b||'')));
+  const dueMsValues = groups.map(group => typeof group.nextDueDateMs === 'number' ? group.nextDueDateMs : null)
+    .filter(v => typeof v === 'number' && isFinite(v));
+  const nearestDueMs = dueMsValues.length ? Math.min.apply(null, dueMsValues) : null;
+  const nearestDueDate = nearestDueMs ? new Date(nearestDueMs) : null;
+  const summaryInfo = {
+    scope,
+    soNumbers: summarySoNumbers,
+    invoiceGroupIds: summaryInvoiceGroups,
+    customerIds: summaryCustomerIds,
+    businessNames: summaryBusinessNames,
+    nearestDueDateIso: nearestDueDate ? nearestDueDate.toISOString() : '',
+    nearestDueDateDisplay: nearestDueDate ? formatDateForSummary_(nearestDueDate, tz) : '',
+    overdueGroupCount: groups.filter(group => group.hasOverdue).length,
+    totalGroups: groups.length,
+    totalDocuments: docsFlat.length,
+    outstandingBalance: totals.balance
+  };
+
   const meta = {
     matchedCount: items.length,
     groupCount: groups.length,
@@ -1031,7 +1111,8 @@ function wh_getSummary(params){
       soNumber,
       customerId,
       invoiceGroupId
-    }
+    },
+    summary: summaryInfo
   };
 
   if (debugging) {
@@ -1158,6 +1239,30 @@ function parseSummaryCustomerIds_(row){
   add(row.CompanyID);
 
   return out;
+}
+
+function extractSummaryBusinessName_(row){
+  if (!row || typeof row !== 'object') return '';
+  const directKeys = [
+    'CompanyName','BusinessName','Company','Business','Customer','CustomerName',
+    'Company Name','Business Name','Customer Name'
+  ];
+  for (let i=0;i<directKeys.length;i++) {
+    const key = directKeys[i];
+    if (!Object.prototype.hasOwnProperty.call(row, key)) continue;
+    const val = String(row[key]||'').trim();
+    if (val) return val;
+  }
+  const keys = Object.keys(row);
+  for (let i=0;i<keys.length;i++) {
+    const key = keys[i];
+    const norm = String(key||'').replace(/[^a-z0-9]/gi,'').toLowerCase();
+    if (norm === 'companyname' || norm === 'businessname' || norm === 'customername') {
+      const val = String(row[key]||'').trim();
+      if (val) return val;
+    }
+  }
+  return '';
 }
 
 function buildSummaryDocLabel_(docType, docFlavor){
