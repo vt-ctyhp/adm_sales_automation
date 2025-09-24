@@ -735,12 +735,15 @@ function wh_getSummary(params){
     Object.keys(H).forEach(k=>raw[k]=r[H[k]-1]);
 
     const soQuery = soNumber;
+    const ledgerSOs = parseSummarySOList_(raw);
+    const ledgerCustomerIds = parseSummaryCustomerIds_(raw);
+    const ledgerGroupId = String(raw.InvoiceGroupID||'').trim();
     const match = scope==='SO'
-      ? (soQuery ? parseSummarySOList_(raw).some(so => soEq_(so, soQuery)) : false)
+      ? (soQuery ? ledgerSOs.some(so => soEq_(so, soQuery)) : false)
       : scope==='CUSTOMER'
-        ? (String(raw.CustomerID||'').trim() === customerId)
+        ? (customerId ? ledgerCustomerIds.some(id => idEq_(id, customerId)) : false)
         : scope==='GROUP'
-          ? (String(raw.InvoiceGroupID||'').trim() === invoiceGroupId)
+          ? (invoiceGroupId ? idEq_(ledgerGroupId, invoiceGroupId) : false)
           : false;
     if (!match) continue;
 
@@ -955,19 +958,85 @@ function wh_applyCreditNow(payload){
 }
 
 function parseSummarySOList_(row){
+  if (!row || typeof row !== 'object') return [];
   const out = [];
   const seen = new Set();
   const add = so => {
     const val = String(so||'').trim();
-    if (!val || seen.has(val)) return;
-    seen.add(val);
+    const norm = normalizeSo_(val);
+    if (!norm || seen.has(norm)) return;
+    seen.add(norm);
     out.push(val);
   };
-  add(row.PrimarySO);
-  String(row.SOsCSV||'').split(',').forEach(part => {
-    const cleaned = String(part||'').split(':')[0].trim();
-    add(cleaned);
+
+  const addFromCsv = value => {
+    String(value||'')
+      .replace(/[|;]/g, ',')
+      .split(/[\n,]/)
+      .map(part => String(part||'').split(':')[0].trim())
+      .forEach(part => add(part));
+  };
+
+  const addFromJson = value => {
+    if (!value) return;
+    try {
+      const parsed = (typeof value === 'string') ? JSON.parse(value) : value;
+      if (Array.isArray(parsed)) {
+        parsed.forEach(add);
+      } else if (parsed && typeof parsed === 'object') {
+        Object.keys(parsed).forEach(add);
+      }
+    } catch(_) {
+      addFromCsv(value);
+    }
+  };
+
+  const keys = Object.keys(row);
+  keys.forEach(key => {
+    const lower = String(key||'').toLowerCase();
+    const keyNorm = lower.replace(/[^a-z0-9]/g, '');
+    if (keyNorm === 'primaryso' || keyNorm === 'primaryso#') {
+      add(row[key]);
+    } else if (keyNorm === 'soscsv' || keyNorm === 'solist' || keyNorm === 'sos') {
+      addFromCsv(row[key]);
+    } else if (keyNorm === 'allocationsjson' || keyNorm === 'sojson') {
+      addFromJson(row[key]);
+    }
   });
+
+  // Explicit known columns for clarity
+  add(row.PrimarySO);
+  addFromCsv(row.SOsCSV);
+  addFromCsv(row.SO_List);
+  addFromJson(row.AllocationsJSON);
+
+  return out;
+}
+
+function parseSummaryCustomerIds_(row){
+  if (!row || typeof row !== 'object') return [];
+  const out = [];
+  const seen = new Set();
+  const add = id => {
+    const val = String(id||'').trim();
+    const norm = normalizeId_(val);
+    if (!norm || seen.has(norm)) return;
+    seen.add(norm);
+    out.push(val);
+  };
+
+  const keys = Object.keys(row);
+  keys.forEach(key => {
+    const lower = String(key||'').toLowerCase();
+    const keyNorm = lower.replace(/[^a-z0-9]/g, '');
+    if (keyNorm === 'customerid' || keyNorm === 'companyid' || keyNorm === 'customercompanyid') {
+      add(row[key]);
+    }
+  });
+
+  add(row.CustomerID);
+  add(row.CompanyID);
+
   return out;
 }
 
@@ -1606,9 +1675,22 @@ function normalizeSo_(value){
   return raw.replace(/[^A-Z0-9]/g, '');
 }
 
+function normalizeId_(value){
+  const raw = String(value||'').trim().toUpperCase();
+  if (!raw) return '';
+  return raw.replace(/[^A-Z0-9]/g, '');
+}
+
 function soEq_(a,b){
   const na = normalizeSo_(a);
   const nb = normalizeSo_(b);
+  if (!na || !nb) return false;
+  return na === nb;
+}
+
+function idEq_(a,b){
+  const na = normalizeId_(a);
+  const nb = normalizeId_(b);
   if (!na || !nb) return false;
   return na === nb;
 }
