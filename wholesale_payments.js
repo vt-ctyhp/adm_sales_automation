@@ -787,12 +787,18 @@ function wh_getSummary(params){
       }
     }
 
+    const docTypeRaw = String(raw.DocType||'');
+    const docTypeUpper = docTypeRaw.toUpperCase();
+    const amountInfo = resolveSummaryAmount_(raw, docTypeUpper);
+
     if (debugging) {
       const dbgRow = {
         rowIndex: i + 2,
         paymentId: raw.PaymentID || '',
         docNumber: raw.DocNumber || '',
         docType: raw.DocType || '',
+        amount: amountInfo.amount,
+        amountSource: amountInfo.source,
         ledgerSOs,
         ledgerCustomerIds,
         ledgerGroupId,
@@ -810,11 +816,9 @@ function wh_getSummary(params){
 
     items.push(raw);
 
-    const docTypeRaw = String(raw.DocType||'');
-    const docTypeUpper = docTypeRaw.toUpperCase();
     const docFlavor = String(raw.DocFlavor||'');
     const docStatus = String(raw.DocStatus||'');
-    const amount = round2_(num_(raw.AmountGross,0));
+    const amount = amountInfo.amount;
 
     const docDate = coerceDate_(raw.DOC_DATE || raw.PaymentDateTime || raw.SubmittedAt);
     const paymentDate = coerceDate_(raw.PaymentDateTime);
@@ -849,7 +853,8 @@ function wh_getSummary(params){
       isActiveInvoice: false,
       dueDateMs,
       activityMs: docDateMs,
-      notes: String(raw.Notes||'').trim()
+      notes: String(raw.Notes||'').trim(),
+      amountSource: amountInfo.source
     };
 
     docOut.isActiveInvoice = docOut.isInvoice && isActiveInvoiceStatus_(docStatus);
@@ -962,7 +967,8 @@ function wh_getSummary(params){
         isOverdue: doc.isOverdue,
         isActiveInvoice: doc.isActiveInvoice,
         soNumbers: doc.soNumbers,
-        amountFormatted: formatCurrency_(doc.amount)
+        amountFormatted: formatCurrency_(doc.amount),
+        amountSource: doc.amountSource
       }))
     });
 
@@ -1116,6 +1122,51 @@ function parseSummaryCustomerIds_(row){
 function buildSummaryDocLabel_(docType, docFlavor){
   const parts = [String(docType||'').trim(), String(docFlavor||'').trim()].filter(Boolean);
   return parts.join(' — ');
+}
+
+function resolveSummaryAmount_(row, docTypeUpper){
+  const docType = String(docTypeUpper||'').toUpperCase();
+  const gross = numFromLedger_(row ? row.AmountGross : null);
+  const net = numFromLedger_(row ? row.AmountNet : null);
+  const subtotal = numFromLedger_(row ? row.LinesSubtotal : null);
+  const shipping = numFromLedger_(row ? row.ShippingTotal : null);
+
+  const finish = (amount, source) => ({ amount: round2_(amount||0), source });
+
+  if (isInvoiceDoc_(docType)) {
+    if (gross !== null && gross !== 0) return finish(gross, 'AmountGross');
+    if (net !== null && net !== 0) return finish(net, 'AmountNet');
+
+    const hasSubtotalOrShipping = (subtotal !== null) || (shipping !== null);
+
+    if (hasSubtotalOrShipping) {
+      const sum = (subtotal||0) + (shipping||0);
+      if (sum !== 0) return finish(sum, 'LinesSubtotal/ShippingTotal');
+    }
+
+    const linesTotal = sumLedgerLines_(row ? row.LinesJSON : null);
+    if (linesTotal !== null) {
+      const combined = linesTotal + (shipping||0);
+      if (combined !== 0) {
+        return finish(combined, shipping !== null ? 'LinesJSON+ShippingTotal' : 'LinesJSON');
+      }
+    }
+
+    if (hasSubtotalOrShipping) {
+      const sum = (subtotal||0) + (shipping||0);
+      return finish(sum, 'LinesSubtotal/ShippingTotal');
+    }
+
+    if (gross !== null) return finish(gross, 'AmountGross');
+    if (net !== null) return finish(net, 'AmountNet');
+  } else {
+    if (gross !== null && gross !== 0) return finish(gross, 'AmountGross');
+    if (net !== null && net !== 0) return finish(net, 'AmountNet');
+    if (gross !== null) return finish(gross, 'AmountGross');
+    if (net !== null) return finish(net, 'AmountNet');
+  }
+
+  return finish(0, 'Default0');
 }
 
 function isInvoiceDoc_(docTypeUpper){
@@ -1742,6 +1793,65 @@ function hIndex_(hdr){ const H={}; (hdr||[]).forEach((h,i)=>{ const k=String(h||
 function pickH_(H, names){ for (const n of (names||[])) if (H[n]) return H[n]; return 0; }
 function headerMap_(hdrRow){ const m={}; hdrRow.forEach((h,i)=>{ m[String(h||'').trim()] = i+1; }); return m; }
 function setIf_(row,H,key,val){ if (H[key]) row[H[key]-1] = val; }
+
+function numFromLedger_(value){
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'number') return isFinite(value) ? value : null;
+  if (value instanceof Date) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  const cleaned = text.replace(/[^0-9.\-]/g, '');
+  if (!cleaned) return null;
+  const parsed = parseFloat(cleaned);
+  return isFinite(parsed) ? parsed : null;
+}
+
+function sumLedgerLines_(linesValue){
+  if (linesValue === null || linesValue === undefined) return null;
+  let parsed = linesValue;
+  if (typeof parsed === 'string') {
+    const trimmed = parsed.trim();
+    if (!trimmed) return null;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  if (!Array.isArray(parsed)) return null;
+
+  let total = 0;
+  let hasValue = false;
+
+  parsed.forEach(line => {
+    if (!line || typeof line !== 'object') return;
+
+    const explicit = numFromLedger_(line.total || line.lineTotal || line.extended || line.extendedAmount || line.amountTotal);
+    if (explicit !== null) {
+      total += explicit;
+      hasValue = true;
+      return;
+    }
+
+    const qty = numFromLedger_(line.qty ?? line.quantity ?? line.qtyOrdered ?? line.qtyBilled ?? line.units);
+    const amt = numFromLedger_(line.amt ?? line.amount ?? line.rate ?? line.price ?? line.unitPrice);
+
+    let lineTotal = null;
+    if (qty !== null && amt !== null) {
+      lineTotal = qty * amt;
+    } else if (amt !== null) {
+      lineTotal = amt;
+    }
+
+    if (lineTotal !== null) {
+      total += lineTotal;
+      hasValue = true;
+    }
+  });
+
+  return hasValue ? total : null;
+}
 function normalizeSo_(value){
   const raw = String(value||'').trim().toUpperCase();
   if (!raw) return '';
