@@ -930,6 +930,7 @@ function wh_getSummary(params){
     const groupLabel = group.invoiceGroupId || (soNumbers.length ? `SO ${soNumbers.join(', ')}` : 'Ungrouped');
 
     groups.push({
+      key: group.key,
       invoiceGroupId: group.invoiceGroupId,
       label: groupLabel,
       soNumbers,
@@ -996,23 +997,63 @@ function wh_getSummary(params){
 
   const warnings = dedupeSummaryWarnings_(generalWarnings);
 
+  const docsFlat = [];
+  groups.forEach(group => {
+    const groupLabel = group.label || '';
+    const groupKey = group.key || group.invoiceGroupId || '';
+    const invoiceGroupId = group.invoiceGroupId || '';
+    const docs = Array.isArray(group.docs) ? group.docs : [];
+    docs.forEach(doc => {
+      docsFlat.push({
+        groupKey,
+        groupLabel,
+        invoiceGroupId,
+        docType: doc.docType,
+        docFlavor: doc.docFlavor,
+        docLabel: doc.docLabel,
+        docNumber: doc.docNumber,
+        docStatus: doc.docStatus,
+        displayDate: doc.displayDate,
+        dueDateDisplay: doc.dueDateDisplay,
+        amount: doc.amount,
+        method: doc.method,
+        pdfUrl: doc.pdfUrl,
+        amountSource: doc.amountSource
+      });
+    });
+  });
+
+  const meta = {
+    matchedCount: items.length,
+    groupCount: groups.length,
+    filters: {
+      scope,
+      soNumber,
+      customerId,
+      invoiceGroupId
+    }
+  };
+
   if (debugging) {
     dbg('wh_getSummary: summary built', {
       scope,
       itemCount: items.length,
       groupCount: groups.length,
       totals,
-      warnings
+      warnings,
+      meta
     });
   }
 
-  return {
+  return sanitizeForClient_({
     scope,
     items,
     totals,
     groups,
-    warnings
-  };
+    warnings,
+    meta,
+    docs: docsFlat
+  });
 }
 
 // ============================= CREDIT APPLY =============================
@@ -1876,6 +1917,17 @@ function idEq_(a,b){
   const nb = normalizeId_(b);
   if (!na || !nb) return false;
   return na === nb;
+}
+
+function sanitizeForClient_(value){
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (err) {
+    try {
+      dbg('sanitizeForClient_ error', { error: String(err) });
+    } catch (_) {}
+    return value;
+  }
 }
 function num_(v, d){ const n=parseFloat(String(v||'').replace(/[^\d.\-]/g,'')); return isFinite(n)?n:(d||0); }
 function round2_(n){ return Math.round(num_(n,0)*100)/100; }

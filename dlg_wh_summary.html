@@ -42,6 +42,9 @@
     table.docs tbody tr.overdue td a { color:#b91c1c; }
     .group-warnings { margin-top:12px; background:#fffbeb; border:1px solid #fcd34d; border-radius:8px; padding:12px; color:#92400e; font-size:12px; }
     .group-warnings ul { margin:6px 0 0 18px; padding:0; }
+    .fallback-note { background:#eef2ff; border:1px solid #c7d2fe; border-radius:8px; padding:14px; color:#312e81; font-size:12px; margin-bottom:12px; }
+    .fallback-note strong { display:block; font-size:14px; margin-bottom:6px; }
+    .filters { margin-top:8px; color:#4b5563; }
     .empty { padding:24px; text-align:center; color:#6b7280; font-style:italic; }
     a { color:#2563eb; text-decoration:none; }
     a:hover { text-decoration:underline; }
@@ -100,21 +103,31 @@ function refresh(){
   });
 }
 function asArray(value){
+  if (!value) return [];
   if (Array.isArray(value)) return value;
-  if (!value || typeof value !== 'object') return [];
-  return Object.values(value).filter(v => v !== null && v !== undefined);
+  if (typeof value === 'object') {
+    if (typeof value.length === 'number') {
+      const arr = [];
+      for (let i = 0; i < value.length; i++) {
+        if (Object.prototype.hasOwnProperty.call(value, i)) {
+          arr.push(value[i]);
+        }
+      }
+      if (arr.length) return arr.filter(v => v !== null && v !== undefined);
+    }
+    const keys = Object.keys(value);
+    if (!keys.length) return [];
+    const numericKeys = keys.filter(k => /^\d+$/.test(k)).sort((a,b)=>Number(a)-Number(b));
+    const orderedKeys = numericKeys.length ? numericKeys : keys;
+    return orderedKeys.map(k => value[k]).filter(v => v !== null && v !== undefined);
+  }
+  return [];
 }
 
 function render(res){
   console.debug('[ADM_DEBUG] summary ->', res);
   const groups = asArray(res && res.groups);
-  if (!res || !groups.length) {
-    $('#out').classList.remove('hint');
-    $('#out').innerHTML = `<div class="card empty">No documents found for the selected scope.</div>`;
-    return;
-  }
-
-  const totals = res.totals || {};
+  const totals = res && res.totals || {};
   const totalsHtml = `
     <div class="card">
       <div class="totals">
@@ -126,12 +139,72 @@ function render(res){
       </div>
     </div>`;
 
-  const warnings = asArray(res.warnings);
+  const warnings = asArray(res && res.warnings);
   const warningHtml = warnings.length ? `
     <div class="warnings">
       <strong>Warnings &amp; Alerts</strong>
       <ul>${warnings.map(w => `<li>${safe(w)}</li>`).join('')}</ul>
     </div>` : '';
+
+  const meta = res && res.meta || {};
+  const filters = meta && meta.filters || {};
+  const docsFallback = asArray(res && res.docs);
+
+  if (!res || !groups.length) {
+    $('#out').classList.remove('hint');
+
+    if (docsFallback.length) {
+      const filterSummary = `Scope: ${safe(filters.scope || '') || '—'} · SO: ${safe(filters.soNumber || '') || '—'} · Customer: ${safe(filters.customerId || '') || '—'} · Group: ${safe(filters.invoiceGroupId || '') || '—'}`;
+      const fallbackRows = docsFallback.map(doc => {
+        return `
+          <tr>
+            <td>${safe(doc.displayDate || '')}</td>
+            <td>${safe(doc.groupLabel || '')}</td>
+            <td>${safe(doc.docLabel || doc.docType || '')}</td>
+            <td>${safe(doc.docNumber || '')}</td>
+            <td>${safe(doc.docStatus || '')}</td>
+            <td>${safe(doc.dueDateDisplay || '')}</td>
+            <td class="numeric">${safe(formatCurrency(doc.amount))}</td>
+            <td>${safe(doc.method || '')}</td>
+            <td>${doc.pdfUrl ? `<a href="${safe(doc.pdfUrl)}" target="_blank">PDF</a>` : ''}</td>
+          </tr>`;
+      }).join('');
+
+      $('#out').innerHTML = `${warningHtml}${totalsHtml}
+        <div class="card">
+          <div class="group-body">
+            <div class="fallback-note">
+              <strong>Ledger matches found</strong>
+              <div>Showing ${docsFallback.length} document${docsFallback.length === 1 ? '' : 's'} directly because the grouped summary was empty.</div>
+              <div class="filters">${filterSummary}</div>
+            </div>
+            <table class="docs">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Group</th>
+                  <th>Document</th>
+                  <th>Number</th>
+                  <th>Status</th>
+                  <th>Due</th>
+                  <th class="numeric">Amount</th>
+                  <th>Method</th>
+                  <th>Links</th>
+                </tr>
+              </thead>
+              <tbody>${fallbackRows}</tbody>
+            </table>
+          </div>
+        </div>`;
+      return;
+    }
+
+    const filterText = (filters.scope || filters.soNumber || filters.customerId || filters.invoiceGroupId)
+      ? `<div class="hint">Checked scope ${safe(filters.scope || 'SO')} for SO ${safe(filters.soNumber || '—')} · Customer ${safe(filters.customerId || '—')} · Group ${safe(filters.invoiceGroupId || '—')}.</div>`
+      : '';
+    $('#out').innerHTML = `<div class="card empty">No documents found for the selected scope.</div>${filterText}`;
+    return;
+  }
 
   const groupsHtml = groups.map(group => {
     const docs = asArray(group && group.docs);
