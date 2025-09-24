@@ -963,6 +963,17 @@ function buildStatusPayloadFromRow_(row){
     threeDDeadline: formatDateYMD_(getValue('3D Deadline')),
     productionDeadline: formatDateYMD_(getValue('Production Deadline'))
   };
+  const contact = {
+    email: getDisplayMulti(['Email','Primary Email','Contact Email','Customer Email']),
+    phone: getDisplayMulti(['Phone','Phone Number','Contact Phone','Customer Phone'])
+  };
+  const address = {
+    line1: getDisplayMulti(['Address','Address Line 1','Street Address']),
+    line2: getDisplayMulti(['Address Line 2','Street','Street 2','Suite/Unit']),
+    cityStateZip: getDisplayMulti(['City, State ZIP','City/State/ZIP','City State Zip','City / State / Zip'])
+  };
+  const assignedRep = getDisplayMulti(['Assigned Rep','Assigned To','Sales Rep','Account Manager']);
+  const nextSteps = getDisplayMulti(['Next Steps','Status Notes','Next Step','Order Next Steps']);
   let trackerUrl = '';
   if (H['Customer Order Tracker URL']) {
     trackerUrl = extractUrlFromCell_(rowRange.getCell(1, H['Customer Order Tracker URL']));
@@ -982,7 +993,11 @@ function buildStatusPayloadFromRow_(row){
     customerName: getDisplayMulti(['Customer Name','Business Name']),
     product: getDisplayMulti(['Product']),
     productDescription: getDisplayMulti(['Product Description','Prod Description','Product','Description','Short Description']),
-    trackerUrl
+    trackerUrl,
+    contact,
+    address,
+    assignedRep,
+    nextSteps
   };
 }
 
@@ -1039,12 +1054,213 @@ function trackerTabName_(soDisplay){
   return base + ' 3D Tracker';
 }
 
-function updateCustomerTrackerSheet_(trackerUrl, customerName, product, soDisplay, payload){
+const TRACKER_SF_TZ = 'America/Los_Angeles';
+const TRACKER_LOG_HEADERS = [
+  'Log Date',
+  'Sales Stage',
+  'Conversion Status',
+  'Custom Order Status',
+  'In Production Status',
+  'Next Steps',
+  'Deadline Type',
+  'Deadline Move',
+  'Move Count',
+  'Assigned Rep',
+  'Updated By',
+  'Updated At'
+];
+const TRACKER_LOG_START_COL = 2; // Column B
+const TRACKER_TITLE_ROW = 2;
+const TRACKER_LEFT_INFO_START_ROW = 4;
+const TRACKER_RIGHT_INFO_START_COL = TRACKER_LOG_START_COL + 4; // Column F
+const TRACKER_INFO_ROWS = 5;
+const TRACKER_LOG_LABEL_ROW = 9;
+const TRACKER_LOG_HEADER_ROW = 11;
+
+function trackerFormatYMDForDisplay_(ymd){
+  if (!ymd) return '';
+  const dt = parseYMD_(ymd);
+  if (!dt) return '';
+  return Utilities.formatDate(dt, TRACKER_SF_TZ, 'MM/dd/yy');
+}
+
+function trackerFormatDeadlineMove_(beforeYMD, afterYMD){
+  const beforeDisplay = trackerFormatYMDForDisplay_(beforeYMD);
+  const afterDisplay = trackerFormatYMDForDisplay_(afterYMD);
+  if (beforeDisplay && afterDisplay) {
+    if (beforeDisplay === afterDisplay) return '';
+    return beforeDisplay + ' → ' + afterDisplay;
+  }
+  if (!beforeDisplay && afterDisplay) {
+    return 'Set to ' + afterDisplay;
+  }
+  if (beforeDisplay && !afterDisplay) {
+    return 'Cleared (was ' + beforeDisplay + ')';
+  }
+  return '';
+}
+
+function trackerMaybeResetLegacyLayout_(sheet){
+  if (!sheet) return;
+  const firstCell = String(sheet.getRange(1, 1).getDisplayValue() || '').trim();
+  if (firstCell === 'Field') {
+    sheet.clear();
+  }
+}
+
+function trackerEnsureLayout_(sheet, payload){
+  trackerMaybeResetLegacyLayout_(sheet);
+  const maxNeededCols = TRACKER_LOG_START_COL + TRACKER_LOG_HEADERS.length;
+  if (sheet.getMaxColumns() < maxNeededCols) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), maxNeededCols - sheet.getMaxColumns());
+  }
+
+  const titleRange = sheet.getRange(TRACKER_TITLE_ROW, TRACKER_LOG_START_COL, 1, TRACKER_LOG_HEADERS.length);
+  titleRange.breakApart();
+  titleRange.merge();
+  const businessName = (payload && (payload.businessName || payload.customerName)) || '';
+  const soDisplay = (payload && payload.soDisplay) || (payload && payload.soPretty) || '';
+  let title = '';
+  if (businessName && soDisplay) {
+    title = businessName + ' - (' + soDisplay + ' Tracker)';
+  } else if (soDisplay) {
+    title = soDisplay + ' Tracker';
+  } else if (businessName) {
+    title = businessName + ' Tracker';
+  } else {
+    title = 'Customer Tracker';
+  }
+  titleRange.setValue(title).setFontWeight('bold').setFontSize(16).setHorizontalAlignment('left');
+
+  const leftInfo = [
+    ['Company ID:', (payload && payload.customerId) || ''],
+    ['Business Name:', businessName || ''],
+    ['Address:', (payload && payload.address && payload.address.line1) || ''],
+    ['Street:', (payload && payload.address && payload.address.line2) || ''],
+    ['City, State ZIP:', (payload && payload.address && payload.address.cityStateZip) || '']
+  ];
+  sheet.getRange(TRACKER_LEFT_INFO_START_ROW, TRACKER_LOG_START_COL, TRACKER_INFO_ROWS, 2).setValues(leftInfo);
+  sheet.getRange(TRACKER_LEFT_INFO_START_ROW, TRACKER_LOG_START_COL).offset(0, 0, TRACKER_INFO_ROWS, 1).setFontWeight('bold');
+
+  const orderDate = (payload && payload.dates && payload.dates.orderDate) || '';
+  const rightInfo = [
+    ['Order Date:', trackerFormatYMDForDisplay_(orderDate)],
+    ['Assigned Rep:', (payload && payload.assignedRep) || ''],
+    ['Email:', (payload && payload.contact && payload.contact.email) || ''],
+    ['Phone:', (payload && payload.contact && payload.contact.phone) || ''],
+    ['SO Number:', (payload && payload.soDisplay) || (payload && payload.soNumber) || '']
+  ];
+  sheet.getRange(TRACKER_LEFT_INFO_START_ROW, TRACKER_RIGHT_INFO_START_COL, TRACKER_INFO_ROWS, 2).setValues(rightInfo);
+  sheet.getRange(TRACKER_LEFT_INFO_START_ROW, TRACKER_RIGHT_INFO_START_COL).offset(0, 0, TRACKER_INFO_ROWS, 1).setFontWeight('bold');
+
+  const logLabelRange = sheet.getRange(TRACKER_LOG_LABEL_ROW, TRACKER_LOG_START_COL, 1, TRACKER_LOG_HEADERS.length);
+  logLabelRange.breakApart();
+  logLabelRange.merge();
+  logLabelRange.setValue('Status Update Log').setFontWeight('bold').setFontSize(12);
+
+  const headerRange = sheet.getRange(TRACKER_LOG_HEADER_ROW, TRACKER_LOG_START_COL, 1, TRACKER_LOG_HEADERS.length);
+  headerRange.setValues([TRACKER_LOG_HEADERS]);
+  headerRange.setFontWeight('bold').setBackground('#e5e7eb');
+
+  sheet.setFrozenRows(TRACKER_LOG_HEADER_ROW);
+  for (let i = 0; i < TRACKER_LOG_HEADERS.length; i++) {
+    const col = TRACKER_LOG_START_COL + i;
+    try {
+      sheet.setColumnWidth(col, i === 0 ? 110 : (i === TRACKER_LOG_HEADERS.length - 1 ? 160 : 150));
+    } catch (_) {}
+  }
+}
+
+function trackerExistingMoveCount_(sheet, type){
+  if (!type) return 0;
+  const last = sheet.getLastRow();
+  if (last <= TRACKER_LOG_HEADER_ROW) return 0;
+  const countRange = sheet.getRange(TRACKER_LOG_HEADER_ROW + 1, TRACKER_LOG_START_COL + 6, last - TRACKER_LOG_HEADER_ROW, 1).getDisplayValues();
+  let count = 0;
+  for (let i = 0; i < countRange.length; i++) {
+    const cell = String((countRange[i] && countRange[i][0]) || '').trim();
+    if (cell === type) count++;
+  }
+  return count;
+}
+
+function trackerBuildLogRows_(sheet, beforePayload, afterPayload, userEmail, now){
+  const tz = TRACKER_SF_TZ;
+  const rows = [];
+  const afterStatuses = (afterPayload && afterPayload.statuses) || {};
+  const afterDates = (afterPayload && afterPayload.dates) || {};
+  const beforeDates = (beforePayload && beforePayload.dates) || {};
+  const assignedRep = (afterPayload && afterPayload.assignedRep) || (beforePayload && beforePayload.assignedRep) || '';
+  const nextSteps = (afterPayload && afterPayload.nextSteps) || (beforePayload && beforePayload.nextSteps) || '';
+  const logDate = Utilities.formatDate(now, tz, 'MM/dd/yy');
+  const updatedAt = Utilities.formatDate(now, tz, 'MM/dd/yy hh:mm a');
+  const baseRow = [
+    logDate,
+    afterStatuses.salesStage || '',
+    afterStatuses.conversionStatus || '',
+    afterStatuses.customOrderStatus || '',
+    afterStatuses.inProductionStatus || '',
+    nextSteps || '',
+    '',
+    '',
+    '',
+    assignedRep || '',
+    userEmail || '',
+    updatedAt
+  ];
+
+  const deadlineChanges = [];
+  if ((beforeDates.threeDDeadline || afterDates.threeDDeadline) && beforeDates.threeDDeadline !== afterDates.threeDDeadline) {
+    deadlineChanges.push({
+      type: '3D Deadline',
+      before: beforeDates.threeDDeadline || '',
+      after: afterDates.threeDDeadline || ''
+    });
+  }
+  if ((beforeDates.productionDeadline || afterDates.productionDeadline) && beforeDates.productionDeadline !== afterDates.productionDeadline) {
+    deadlineChanges.push({
+      type: 'Production Deadline',
+      before: beforeDates.productionDeadline || '',
+      after: afterDates.productionDeadline || ''
+    });
+  }
+
+  const existingCounts = {};
+  const pendingCounts = {};
+  function nextMoveCount(type){
+    if (!type) return '';
+    if (!(type in existingCounts)) {
+      existingCounts[type] = trackerExistingMoveCount_(sheet, type);
+    }
+    const prior = existingCounts[type];
+    const pending = pendingCounts[type] || 0;
+    const next = prior + pending + 1;
+    pendingCounts[type] = pending + 1;
+    return next;
+  }
+
+  if (deadlineChanges.length === 0) {
+    rows.push(baseRow);
+  } else {
+    deadlineChanges.forEach(change => {
+      const row = baseRow.slice();
+      row[6] = change.type;
+      row[7] = trackerFormatDeadlineMove_(change.before, change.after);
+      row[8] = row[7] ? nextMoveCount(change.type) : '';
+      rows.push(row);
+    });
+  }
+
+  return rows;
+}
+
+function updateCustomerTrackerSheet_(trackerUrl, beforePayload, afterPayload, userEmail){
   const id = trackerIdFromUrl_(trackerUrl);
   if (!id) return '';
   const ss = SpreadsheetApp.openById(id);
-  const preferredName = trackerTabName_(soDisplay);
-  const legacyName = soDisplay || 'SO';
+  const display = (afterPayload && afterPayload.soDisplay) || (beforePayload && beforePayload.soDisplay) || '';
+  const preferredName = trackerTabName_(display);
+  const legacyName = display || 'SO';
   let sheet = ss.getSheetByName(preferredName);
   if (!sheet && legacyName && legacyName !== preferredName) {
     sheet = ss.getSheetByName(legacyName);
@@ -1055,27 +1271,19 @@ function updateCustomerTrackerSheet_(trackerUrl, customerName, product, soDispla
   }
   if (!sheet) {
     sheet = ss.insertSheet(preferredName);
-  } else {
-    sheet.clearContents();
   }
-  const rows = [
-    ['Field','Value'],
-    ['SO Number', soDisplay || ''],
-    ['Customer', customerName || ''],
-    ['Product', product || ''],
-    ['Sales Stage', payload.salesStage || ''],
-    ['Conversion Status', payload.conversionStatus || ''],
-    ['Custom Order Status', payload.customOrderStatus || ''],
-    ['In Production Status', payload.inProductionStatus || ''],
-    ['Order Date', payload.orderDate || ''],
-    ['3D Deadline', payload.threeDDeadline || ''],
-    ['Production Deadline', payload.productionDeadline || '']
-  ];
-  sheet.getRange(1, 1, rows.length, rows[0].length).setValues(rows);
-  sheet.setFrozenRows(1);
-  try {
-    sheet.autoResizeColumns(1, 2);
-  } catch (_) {}
+
+  const infoPayload = afterPayload || beforePayload || {};
+  trackerEnsureLayout_(sheet, infoPayload);
+
+  const now = new Date();
+  const rows = trackerBuildLogRows_(sheet, beforePayload, afterPayload, userEmail, now);
+  if (rows.length) {
+    const startRow = Math.max(sheet.getLastRow() + 1, TRACKER_LOG_HEADER_ROW + 1);
+    sheet.getRange(startRow, TRACKER_LOG_START_COL, rows.length, TRACKER_LOG_HEADERS.length).setValues(rows);
+    sheet.getRange(startRow, TRACKER_LOG_START_COL, rows.length, TRACKER_LOG_HEADERS.length).setBorder(true, true, true, true, false, false);
+  }
+
   return sheet.getName();
 }
 
@@ -1144,6 +1352,7 @@ function admSubmitStatusUpdate(payload){
   const H = headerIndex1_(sh);
 
   const before = buildStatusPayloadFromRow_(row);
+  const userEmail = Session.getActiveUser().getEmail() || Session.getEffectiveUser().getEmail() || 'user';
 
   function put(label, value){
     if (H[label]) sh.getRange(row, H[label]).setValue(value || '');
@@ -1178,18 +1387,9 @@ function admSubmitStatusUpdate(payload){
     try {
       sheetName = updateCustomerTrackerSheet_(
         trackerUrl,
-        after.customerName,
-        after.product,
-        after.soDisplay,
-        {
-          salesStage: after.statuses && after.statuses.salesStage || '',
-          conversionStatus: after.statuses && after.statuses.conversionStatus || '',
-          customOrderStatus: after.statuses && after.statuses.customOrderStatus || '',
-          inProductionStatus: after.statuses && after.statuses.inProductionStatus || '',
-          orderDate: after.dates && after.dates.orderDate || '',
-          threeDDeadline: after.dates && after.dates.threeDDeadline || '',
-          productionDeadline: after.dates && after.dates.productionDeadline || ''
-        }
+        before,
+        after,
+        userEmail
       );
     } catch (err) {
       console.error('[admSubmitStatusUpdate] tracker update failed:', err);
