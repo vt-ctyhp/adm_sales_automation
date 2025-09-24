@@ -2,19 +2,40 @@
  * Create Quotation flow — dialog + document writer
  */
 
-const QC_MASTER_TAB_NAME = '00_Master Wholesale';
+const QC_SP = (typeof SP !== 'undefined' && SP) ? SP : PropertiesService.getScriptProperties();
 
-const QC_SO_ALIASES = ['SO#', 'SO', 'SO Number'];
-const QC_CUSTOMER_NAME_ALIASES = ['Customer Name', 'Customer', 'Client Name'];
-const QC_EMAIL_ALIASES = ['EmailLower', 'Email'];
-const QC_PHONE_ALIASES = ['PhoneNorm', 'Phone'];
-const QC_BRAND_ALIASES = ['Brand', 'Company'];
-const QC_ROOT_APPT_ALIASES = ['RootApptID', 'Root Appt ID', 'Root Appointment ID', 'Appt ID', 'ApptID'];
+const QC_MASTER_TAB_NAMES = (function () {
+  if (typeof WH_ORDERS_TAB_NAMES !== 'undefined' && Array.isArray(WH_ORDERS_TAB_NAMES) && WH_ORDERS_TAB_NAMES.length) {
+    return WH_ORDERS_TAB_NAMES.slice();
+  }
+  const csv = QC_SP && QC_SP.getProperty ? QC_SP.getProperty('WH_ORDERS_TAB_NAMES_CSV') : '';
+  const list = String(csv || '').split(',').map(s => s.trim()).filter(Boolean);
+  return list.length ? list : ['00_Master Wholesale'];
+})();
+
+const QC_CRM_TAB_NAME = (typeof WH_CRM_TAB_NAME !== 'undefined' && WH_CRM_TAB_NAME)
+  ? WH_CRM_TAB_NAME
+  : ((QC_SP && QC_SP.getProperty ? QC_SP.getProperty('WH_CRM_TAB_NAME') : '') || '01_CRM');
+
+const QC_SO_ALIASES = pickList_(QC_SP && QC_SP.getProperty ? QC_SP.getProperty('WH_SO_COL_ALIASES') : '',
+  ['SO#', 'SO', 'SO Number', 'Sales Order', 'Sales Order #']);
+const QC_CUSTOMER_ID_ALIASES = pickList_(QC_SP && QC_SP.getProperty ? QC_SP.getProperty('WH_CUSTID_COL_ALIASES') : '',
+  ['Customer (Company) ID', 'Customer ID', 'CustomerID', 'ClientID', 'Account Code']);
+const QC_BUSINESS_NAME_ALIASES = pickList_(QC_SP && QC_SP.getProperty ? QC_SP.getProperty('WH_COMPANY_COL_ALIASES') : '',
+  ['Business Name', 'Company Name', 'Customer', 'Customer Name']);
+const QC_CONTACT_NAME_ALIASES = pickList_(QC_SP && QC_SP.getProperty ? QC_SP.getProperty('WH_CONTACT_COL_ALIASES') : '',
+  ['Contact Name', 'Primary Contact', 'Main Contact', 'Contact', 'Attn', 'Attention']);
+const QC_CONTACT_FIRST_ALIASES = ['Contact First Name', 'Contact First', 'Primary Contact First Name', 'Primary Contact First', 'Contact FirstName'];
+const QC_CONTACT_LAST_ALIASES = ['Contact Last Name', 'Contact Last', 'Primary Contact Last Name', 'Primary Contact Last', 'Contact LastName'];
+const QC_EMAIL_ALIASES = ['Contact Email', 'Email', 'EmailLower'];
+const QC_PHONE_ALIASES = ['Contact Phone', 'Phone', 'PhoneNorm'];
 const QC_PRODUCT_DESC_ALIASES = ['Product Description', 'Product', 'Product Name', 'Setting Description', 'Design Request', '3D Design Request'];
 const QC_PRODUCT_DETAILS_ALIASES = ['Product Details', 'Design Notes', 'Ring Style', 'Metal', 'US Size', 'Center Type', 'Diamond Dimension'];
 const QC_QUANTITY_ALIASES = ['Quantity', 'Qty'];
 const QC_TRACKER_ALIASES = ['Customer Order Tracker URL', 'Order Tracker URL', 'Tracker URL'];
 const QC_QUOTATION_URL_ALIASES = ['Quotation URL'];
+const QC_CRM_EMAIL_ALIASES = ['Contact Email', 'Email', 'EmailLower'];
+const QC_CRM_PHONE_ALIASES = ['Contact Phone', 'Phone', 'PhoneNorm'];
 
 const QC_MONEY_HEADERS = ['V1 Quotation', 'V2 Quotation', 'Approved Price'];
 
@@ -29,15 +50,14 @@ function qc_init() {
   const t = ADM_time && ADM_time('qc_init');
   try {
     const ss = SpreadsheetApp.getActive();
-    const master = ss.getSheetByName(QC_MASTER_TAB_NAME);
-    if (!master) {
-      throw new Error('Sheet "' + QC_MASTER_TAB_NAME + '" not found.');
-    }
     const activeSheet = ss.getActiveSheet();
-    if (!activeSheet || activeSheet.getSheetId() !== master.getSheetId()) {
-      throw new Error('Please activate the "' + QC_MASTER_TAB_NAME + '" sheet and select a data row.');
+    const allowedNames = QC_MASTER_TAB_NAMES && QC_MASTER_TAB_NAMES.length ? QC_MASTER_TAB_NAMES : [];
+    if (!activeSheet || (allowedNames.length && allowedNames.indexOf(activeSheet.getName()) === -1)) {
+      const label = allowedNames.length ? allowedNames.join(', ') : 'a wholesale orders tab';
+      throw new Error('Please activate one of the wholesale order tabs (' + label + ') and select a data row.');
     }
-    const rng = activeSheet.getActiveRange();
+    const master = activeSheet;
+    const rng = master.getActiveRange();
     if (!rng) throw new Error('Select a row first.');
     const rowIndex = rng.getRow();
     if (rowIndex <= 1) throw new Error('Select a data row (below the header).');
@@ -51,23 +71,28 @@ function qc_init() {
     const rowDisplay = rowRange.getDisplayValues()[0];
     const rowRich = rowRange.getRichTextValues()[0];
 
-    const ctx = qc_buildContext_(ss, master, H, rowIndex, rowDisplay, rowValues);
+    const ctx = qc_buildContext_(ss, master, master.getName(), H, rowIndex, rowDisplay, rowValues);
     const product = qc_buildProductSnapshot_(H, rowDisplay, rowValues, ctx.trackerUrl);
     const money = qc_buildMoneyPrefill_(H, rowDisplay, rowValues);
     const links = qc_buildLinks_(H, rowDisplay, rowRich);
-    const known = qc_collectKnownSOs_(master, H, ctx.emailLower, ctx.phoneNorm);
+    const known = qc_collectKnownSOs_(ss, ctx, product);
 
     const payload = {
       context: {
         rowIndex,
         sheetId: master.getSheetId(),
+        sheetName: master.getName(),
         masterUrl: ss.getUrl(),
-        brand: ctx.brand,
-        RootApptID: ctx.RootApptID,
         SO: ctx.SO,
         customerName: ctx.customerName,
+        businessName: ctx.businessName,
+        customerId: ctx.customerId,
+        contactName: ctx.contactName,
         emailLower: ctx.emailLower,
-        phoneNorm: ctx.phoneNorm
+        emailDisplay: ctx.emailDisplay,
+        phoneNorm: ctx.phoneNorm,
+        phoneDisplay: ctx.phoneDisplay,
+        trackerUrl: ctx.trackerUrl
       },
       productSnapshot: product,
       knownSOs: known,
@@ -103,7 +128,7 @@ function qc_submit(payload) {
       const qty = Math.max(1, Math.floor(Number(item.qty || item.quantity || 0)));
       if (!qty || !isFinite(qty)) throw new Error('Line ' + (idx + 1) + ' has an invalid quantity.');
       const so = String(item.so || '').trim();
-      if (so) selectedSOs.push(so);
+      if (so && selectedSOs.indexOf(so) === -1) selectedSOs.push(so);
       cleanItems.push({
         so,
         productDescription: String(item.productDescription || '').trim(),
@@ -119,8 +144,7 @@ function qc_submit(payload) {
     const approved = qc_parseMoney_(pricing.approved);
 
     const ss = SpreadsheetApp.getActive();
-    const master = ss.getSheetByName(QC_MASTER_TAB_NAME);
-    if (!master) throw new Error('Sheet "' + QC_MASTER_TAB_NAME + '" not found.');
+    const master = qc_resolveOrdersSheet_(ss, ctx.sheetId, ctx.sheetName);
     const lastCol = master.getLastColumn();
     const headerRow = master.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(s => String(s || '').trim());
     const H = hIndex_(headerRow);
@@ -132,18 +156,28 @@ function qc_submit(payload) {
 
     let docUrl = '';
     if (!payload.saveOnly) {
-      const templateId = quotationTemplateIdForBrand_(ctx.brand);
-      if (!templateId) throw new Error('No quotation template configured for brand "' + (ctx.brand || 'Unknown') + '".');
+      const templateId = quotationTemplateIdForBrand_('');
+      if (!templateId) {
+        throw new Error('No quotation template configured. Set QUOTATION_TEMPLATE_ID_DEFAULT in Script Properties.');
+      }
 
       const existingLink = qc_extractLinkFromSheet_(master, H, rowIndex);
-      const filename = qc_buildQuotationFilename_(ctx.brand, selectedSOs, ctx.RootApptID);
+      const filename = qc_buildQuotationFilename_(ctx.businessName || ctx.customerName, selectedSOs, ctx.customerId);
+      const selectedLabel = selectedSOs.length ? selectedSOs.join(', ') : (ctx.SO || '');
       const placeholders = {
-        BRAND: ctx.brand || '',
-        CUSTOMER_NAME: ctx.customerName || '',
+        BRAND: '',
+        BUSINESS_NAME: ctx.businessName || ctx.customerName || '',
+        CUSTOMER_BUSINESS_NAME: ctx.businessName || ctx.customerName || '',
+        CUSTOMER_NAME: ctx.businessName || ctx.customerName || '',
+        CUSTOMER_ID: ctx.customerId || '',
+        CONTACT_NAME: ctx.contactName || '',
         CUSTOMER_EMAIL: ctx.emailLower || '',
+        CUSTOMER_EMAIL_DISPLAY: ctx.emailDisplay || ctx.emailLower || '',
         CUSTOMER_PHONE: ctx.phoneNorm || '',
-        ROOT_APPT_ID: ctx.RootApptID || '',
-        SELECTED_SOS: selectedSOs.join(', '),
+        CUSTOMER_PHONE_DISPLAY: ctx.phoneDisplay || ctx.phoneNorm || '',
+        ROOT_APPT_ID: '',
+        TRACKER_URL: ctx.trackerUrl || '',
+        SELECTED_SOS: selectedLabel,
         DATE_TODAY: todayPretty,
         V1_QUOTATION: money_(v1),
         V2_QUOTATION: v2 === '' ? '' : money_(v2),
@@ -184,25 +218,59 @@ function qc_submit(payload) {
   }
 }
 
-function qc_buildContext_(ss, sheet, H, rowIndex, rowDisplay, rowValues) {
+function qc_buildContext_(ss, sheet, sheetName, H, rowIndex, rowDisplay, rowValues) {
   const get = (aliases) => qc_pickFirst_(H, aliases, rowDisplay, rowValues);
-  const brand = get(QC_BRAND_ALIASES);
   const so = get(QC_SO_ALIASES);
-  const customerName = get(QC_CUSTOMER_NAME_ALIASES);
-  const emailLower = (get(QC_EMAIL_ALIASES) || '').toLowerCase();
-  const phoneNorm = qc_normPhone_(get(QC_PHONE_ALIASES));
-  const rootApptId = get(QC_ROOT_APPT_ALIASES);
-  const trackerUrl = get(QC_TRACKER_ALIASES);
+  const businessName = get(QC_BUSINESS_NAME_ALIASES);
+  const customerId = get(QC_CUSTOMER_ID_ALIASES);
+  let contactName = get(QC_CONTACT_NAME_ALIASES);
+  if (!contactName) {
+    const first = get(QC_CONTACT_FIRST_ALIASES);
+    const last = get(QC_CONTACT_LAST_ALIASES);
+    contactName = [first, last].filter(Boolean).join(' ').trim();
+  }
+  const trackerFromRow = get(QC_TRACKER_ALIASES);
+  const crm = qc_lookupCrmRow_(ss, customerId, businessName);
+
+  let emailDisplay = '';
+  let emailLower = '';
+  let phoneDisplay = '';
+  let phoneNorm = '';
+  let trackerUrl = trackerFromRow || '';
+
+  if (crm) {
+    emailDisplay = crm.emailDisplay || crm.emailLower || '';
+    emailLower = (crm.emailLower || emailDisplay).toLowerCase();
+    phoneDisplay = crm.phoneDisplay || crm.phoneNorm || '';
+    phoneNorm = qc_normPhone_(crm.phoneNorm || crm.phoneDisplay || '');
+    trackerUrl = trackerUrl || crm.trackerUrl || '';
+    contactName = crm.contactName || contactName;
+  }
+
+  if (!emailLower) {
+    const rawEmail = get(QC_EMAIL_ALIASES);
+    emailDisplay = emailDisplay || rawEmail;
+    emailLower = (rawEmail || '').toLowerCase();
+  }
+  if (!phoneNorm) {
+    const rawPhone = get(QC_PHONE_ALIASES);
+    phoneDisplay = phoneDisplay || rawPhone;
+    phoneNorm = qc_normPhone_(rawPhone);
+  }
 
   return {
     sheetId: sheet.getSheetId(),
+    sheetName,
     rowIndex,
-    brand,
     SO: so,
-    customerName,
+    customerName: businessName || '',
+    businessName: businessName || '',
+    customerId: customerId || '',
+    contactName: contactName || '',
     emailLower,
+    emailDisplay: emailDisplay || emailLower || '',
     phoneNorm,
-    RootApptID: rootApptId,
+    phoneDisplay: phoneDisplay || phoneNorm || '',
     trackerUrl
   };
 }
@@ -255,53 +323,209 @@ function qc_buildLinks_(H, rowDisplay, rowRich) {
   return res;
 }
 
-function qc_collectKnownSOs_(sheet, H, emailLower, phoneNorm) {
-  const lr = sheet.getLastRow();
-  if (lr <= 1) return [];
-  const lc = sheet.getLastColumn();
-  const range = sheet.getRange(2, 1, lr - 1, lc);
-  const vals = range.getValues();
-  const display = range.getDisplayValues();
-  const emailCol = pickH_(H, QC_EMAIL_ALIASES);
-  const phoneCol = pickH_(H, QC_PHONE_ALIASES);
-  const brandCol = pickH_(H, QC_BRAND_ALIASES);
-  const soCol = pickH_(H, QC_SO_ALIASES);
-
-  const seen = new Set();
+function qc_collectKnownSOs_(ss, ctx, productSnapshot) {
+  const tabNames = QC_MASTER_TAB_NAMES && QC_MASTER_TAB_NAMES.length ? QC_MASTER_TAB_NAMES : ss.getSheets().map(s => s.getName());
+  const targetId = String(ctx.customerId || '').trim().toLowerCase();
+  const targetEmail = String(ctx.emailLower || '').trim();
+  const targetPhone = String(ctx.phoneNorm || '').trim();
   const list = [];
-  for (let i = 0; i < vals.length; i++) {
-    const rowVals = vals[i];
-    const rowDisp = display[i];
-    const email = emailCol ? String(rowVals[emailCol - 1] || rowDisp[emailCol - 1] || '').toLowerCase() : '';
-    const phone = phoneCol ? qc_normPhone_(rowVals[phoneCol - 1] || rowDisp[phoneCol - 1] || '') : '';
-    if (emailLower && email && emailLower === email) {
-      // pass
-    } else if (phoneNorm && phone && phoneNorm === phone) {
-      // pass
-    } else {
-      continue;
+  const seenSo = new Set();
+
+  tabNames.forEach(name => {
+    const sheet = ss.getSheetByName(name);
+    if (!sheet) return;
+    const lr = sheet.getLastRow();
+    const lc = sheet.getLastColumn();
+    if (lr <= 1 || lc < 1) return;
+    const headers = sheet.getRange(1, 1, 1, lc).getDisplayValues()[0].map(s => String(s || '').trim());
+    const H = hIndex_(headers);
+    const soCol = pickH_(H, QC_SO_ALIASES);
+    if (!soCol) return;
+
+    const idCol = pickH_(H, QC_CUSTOMER_ID_ALIASES);
+    const emailCol = pickH_(H, QC_EMAIL_ALIASES);
+    const phoneCol = pickH_(H, QC_PHONE_ALIASES);
+    const descCol = pickH_(H, QC_PRODUCT_DESC_ALIASES);
+    const detailsCol = pickH_(H, QC_PRODUCT_DETAILS_ALIASES);
+    const qtyCol = pickH_(H, QC_QUANTITY_ALIASES);
+
+    const values = sheet.getRange(2, 1, lr - 1, lc).getValues();
+    const display = sheet.getRange(2, 1, lr - 1, lc).getDisplayValues();
+
+    for (let i = 0; i < values.length; i++) {
+      const rowVals = values[i];
+      const rowDisp = display[i];
+      const so = String(rowDisp[soCol - 1] || rowVals[soCol - 1] || '').trim();
+      if (!so) continue;
+      const soKey = so.toLowerCase();
+      const rowId = idCol ? String(rowVals[idCol - 1] || rowDisp[idCol - 1] || '').trim().toLowerCase() : '';
+      const rowEmail = emailCol ? String(rowVals[emailCol - 1] || rowDisp[emailCol - 1] || '').trim().toLowerCase() : '';
+      const rowPhone = phoneCol ? qc_normPhone_(rowVals[phoneCol - 1] || rowDisp[phoneCol - 1] || '') : '';
+
+      let match = false;
+      if (targetId && rowId && rowId === targetId) {
+        match = true;
+      } else if (targetEmail && rowEmail && rowEmail === targetEmail) {
+        match = true;
+      } else if (targetPhone && rowPhone && rowPhone === targetPhone) {
+        match = true;
+      }
+      if (!match) continue;
+      if (seenSo.has(soKey)) continue;
+      seenSo.add(soKey);
+
+      const productDescription = descCol ? String(rowDisp[descCol - 1] || rowVals[descCol - 1] || '') : '';
+      const productDetails = detailsCol ? String(rowDisp[detailsCol - 1] || rowVals[detailsCol - 1] || '') : '';
+      const qtyRaw = qtyCol ? (rowVals[qtyCol - 1] || rowDisp[qtyCol - 1] || '') : '';
+      const qty = Math.max(1, Math.round(num_(qtyRaw || 1, 1)) || 1);
+      const metaParts = [];
+      if (productDescription) metaParts.push(productDescription);
+      if (name !== ctx.sheetName) metaParts.push(name);
+      list.push({
+        key: name + '|' + (i + 2) + '|' + so,
+        so,
+        label: so,
+        sheetName: name,
+        rowIndex: i + 2,
+        productDescription: productDescription || '',
+        productDetails: productDetails || '',
+        quantity: qty,
+        meta: metaParts.join(' • ')
+      });
     }
-    const so = soCol ? String(rowDisp[soCol - 1] || '').trim() : '';
-    if (!so) continue;
-    const brand = brandCol ? String(rowDisp[brandCol - 1] || '').trim() : '';
-    const key = (brand || '') + '|' + so;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const productDescription = qc_pickFirstRow_(H, QC_PRODUCT_DESC_ALIASES, rowDisp, rowVals);
-    const productDetails = qc_pickFirstRow_(H, QC_PRODUCT_DETAILS_ALIASES, rowDisp, rowVals);
-    const qtyRaw = qc_pickFirstRow_(H, QC_QUANTITY_ALIASES, rowDisp, rowVals);
-    const qty = Math.max(1, Math.round(num_(qtyRaw || 1, 1)) || 1);
-    list.push({
-      key,
-      brand,
-      so,
-      label: [brand, so].filter(Boolean).join(' • '),
-      productDescription: productDescription || '',
-      productDetails: productDetails || '',
-      quantity: qty
+  });
+
+  const activeSo = String(ctx.SO || '').trim();
+  if (activeSo) {
+    const key = activeSo.toLowerCase();
+    if (!seenSo.has(key)) {
+      seenSo.add(key);
+      const metaParts = [];
+      if (productSnapshot && productSnapshot.productDescription) {
+        metaParts.push(productSnapshot.productDescription);
+      }
+      list.unshift({
+        key: 'active|' + (ctx.sheetName || '') + '|' + (ctx.rowIndex || '') + '|' + activeSo,
+        so: activeSo,
+        label: activeSo,
+        sheetName: ctx.sheetName || '',
+        rowIndex: ctx.rowIndex || 0,
+        productDescription: productSnapshot ? (productSnapshot.productDescription || '') : '',
+        productDetails: productSnapshot ? (productSnapshot.productDetails || '') : '',
+        quantity: productSnapshot ? (productSnapshot.quantity || 1) : 1,
+        meta: metaParts.join(' • ')
+      });
+    } else {
+      const existing = list.find(entry => entry.so === activeSo);
+      if (existing && productSnapshot) {
+        existing.productDescription = existing.productDescription || productSnapshot.productDescription || '';
+        existing.productDetails = existing.productDetails || productSnapshot.productDetails || '';
+        existing.quantity = existing.quantity || productSnapshot.quantity || 1;
+        if (!existing.meta && productSnapshot.productDescription) {
+          existing.meta = productSnapshot.productDescription;
+        }
+      }
+    }
+  }
+
+  return list;
+}
+
+function qc_lookupCrmRow_(ss, customerId, businessName) {
+  const tab = QC_CRM_TAB_NAME;
+  if (!tab) return null;
+  const sheet = ss.getSheetByName(tab);
+  if (!sheet) return null;
+  const lr = sheet.getLastRow();
+  const lc = sheet.getLastColumn();
+  if (lr <= 1 || lc < 1) return null;
+
+  const headers = sheet.getRange(1, 1, 1, lc).getDisplayValues()[0].map(s => String(s || '').trim());
+  const H = hIndex_(headers);
+  const idCol = pickH_(H, QC_CUSTOMER_ID_ALIASES);
+  const nameCol = pickH_(H, QC_BUSINESS_NAME_ALIASES);
+  const emailCol = pickH_(H, QC_CRM_EMAIL_ALIASES);
+  const phoneCol = pickH_(H, QC_CRM_PHONE_ALIASES);
+  const contactCol = pickH_(H, QC_CONTACT_NAME_ALIASES);
+  const contactFirstCol = pickH_(H, QC_CONTACT_FIRST_ALIASES);
+  const contactLastCol = pickH_(H, QC_CONTACT_LAST_ALIASES);
+  const trackerCol = pickH_(H, QC_TRACKER_ALIASES);
+
+  if (!idCol && !nameCol) return null;
+
+  const values = sheet.getRange(2, 1, lr - 1, lc).getValues();
+  const display = sheet.getRange(2, 1, lr - 1, lc).getDisplayValues();
+
+  const wantId = String(customerId || '').trim().toLowerCase();
+  const wantName = String(businessName || '').trim().toLowerCase();
+
+  let fallback = null;
+  for (let i = 0; i < values.length; i++) {
+    const rowVals = values[i];
+    const rowDisp = display[i];
+    const rowIdRaw = idCol ? String(rowVals[idCol - 1] || rowDisp[idCol - 1] || '').trim() : '';
+    const rowNameRaw = nameCol ? String(rowVals[nameCol - 1] || rowDisp[nameCol - 1] || '').trim() : '';
+    const rowId = rowIdRaw.toLowerCase();
+    const rowName = rowNameRaw.toLowerCase();
+    const matchId = wantId && rowId && rowId === wantId;
+    const matchName = !matchId && wantName && rowName && rowName === wantName;
+    if (matchId || matchName) {
+      return qc_buildCrmLookupResult_(rowVals, rowDisp, {
+        id: rowIdRaw,
+        name: rowNameRaw,
+        emailCol,
+        phoneCol,
+        contactCol,
+        contactFirstCol,
+        contactLastCol,
+        trackerCol
+      });
+    }
+    if (!fallback && wantName && rowName && rowName.includes(wantName)) {
+      fallback = { index: i, id: rowIdRaw, name: rowNameRaw };
+    }
+  }
+
+  if (fallback) {
+    const rowVals = values[fallback.index];
+    const rowDisp = display[fallback.index];
+    return qc_buildCrmLookupResult_(rowVals, rowDisp, {
+      id: fallback.id,
+      name: fallback.name,
+      emailCol,
+      phoneCol,
+      contactCol,
+      contactFirstCol,
+      contactLastCol,
+      trackerCol
     });
   }
-  return list;
+  return null;
+}
+
+function qc_buildCrmLookupResult_(rowVals, rowDisp, cols) {
+  const emailDisplay = cols.emailCol ? String(rowDisp[cols.emailCol - 1] || rowVals[cols.emailCol - 1] || '').trim() : '';
+  const emailLower = emailDisplay.toLowerCase();
+  const phoneDisplay = cols.phoneCol ? String(rowDisp[cols.phoneCol - 1] || rowVals[cols.phoneCol - 1] || '').trim() : '';
+  const phoneNorm = qc_normPhone_(phoneDisplay);
+  let contactName = cols.contactCol ? String(rowDisp[cols.contactCol - 1] || rowVals[cols.contactCol - 1] || '').trim() : '';
+  if (!contactName) {
+    const first = cols.contactFirstCol ? String(rowDisp[cols.contactFirstCol - 1] || rowVals[cols.contactFirstCol - 1] || '').trim() : '';
+    const last = cols.contactLastCol ? String(rowDisp[cols.contactLastCol - 1] || rowVals[cols.contactLastCol - 1] || '').trim() : '';
+    contactName = [first, last].filter(Boolean).join(' ').trim();
+  }
+  const trackerUrl = cols.trackerCol ? String(rowDisp[cols.trackerCol - 1] || rowVals[cols.trackerCol - 1] || '').trim() : '';
+
+  return {
+    customerId: String(cols.id || '').trim(),
+    businessName: String(cols.name || '').trim(),
+    contactName,
+    emailDisplay,
+    emailLower,
+    phoneDisplay,
+    phoneNorm,
+    trackerUrl
+  };
 }
 
 function qc_fetchProductSnapshotFromTracker_(trackerUrl) {
@@ -361,6 +585,27 @@ function qc_extractLinkFromSheet_(sheet, H, rowIndex) {
   const rich = cell.getRichTextValue();
   const display = cell.getDisplayValue();
   return qc_extractLink_(rich, display);
+}
+
+function qc_resolveOrdersSheet_(ss, sheetId, sheetName) {
+  const id = Number(sheetId || 0);
+  if (id) {
+    const sheets = ss.getSheets();
+    for (let i = 0; i < sheets.length; i++) {
+      const sh = sheets[i];
+      if (sh && sh.getSheetId && sh.getSheetId() === id) return sh;
+    }
+  }
+  if (sheetName) {
+    const byName = ss.getSheetByName(String(sheetName));
+    if (byName) return byName;
+  }
+  const names = QC_MASTER_TAB_NAMES && QC_MASTER_TAB_NAMES.length ? QC_MASTER_TAB_NAMES : [];
+  for (let i = 0; i < names.length; i++) {
+    const sh = ss.getSheetByName(names[i]);
+    if (sh) return sh;
+  }
+  throw new Error('Unable to locate the wholesale orders sheet for the selected row.');
 }
 
 function qc_writeBack_(sheet, H, rowIndex, updates) {
@@ -496,9 +741,17 @@ function qc_escapeForRegex_(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function qc_buildQuotationFilename_(brand, selectedSOs, rootApptId) {
-  const label = selectedSOs && selectedSOs.length ? selectedSOs[0] : (rootApptId || '');
-  return [brand || 'Brand', label || 'Row', 'Quotation'].filter(Boolean).join(' – ');
+function qc_buildQuotationFilename_(businessName, selectedSOs, customerId) {
+  const parts = [];
+  if (businessName) parts.push(businessName);
+  const firstSo = selectedSOs && selectedSOs.length ? selectedSOs[0] : '';
+  if (firstSo) {
+    parts.push(firstSo);
+  } else if (customerId) {
+    parts.push(customerId);
+  }
+  parts.push('Quotation');
+  return parts.filter(Boolean).join(' – ');
 }
 
 function qc_findQuotationItemsTable_(body, headerRow) {

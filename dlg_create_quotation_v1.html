@@ -238,7 +238,7 @@
     <div class="header">
       <div>
         <h2>Create Quotation</h2>
-        <div class="hint">Prefill pulled from 00_Master Wholesale. Update fields before generating.</div>
+        <div class="hint">Prefill pulled from the wholesale orders tab. Update fields before generating.</div>
       </div>
       <div id="linkWrap" class="link"></div>
     </div>
@@ -248,8 +248,20 @@
     <div class="grid">
       <section class="card" id="colContext">
         <div class="field">
-          <label>Customer</label>
+          <label>Business Name</label>
           <div class="readonly" id="ctxCustomer">—</div>
+        </div>
+        <div class="field">
+          <label>Customer ID</label>
+          <div class="readonly" id="ctxCustomerId">—</div>
+        </div>
+        <div class="field">
+          <label>Active SO</label>
+          <div class="readonly" id="ctxSO">—</div>
+        </div>
+        <div class="field">
+          <label>Primary Contact</label>
+          <div class="readonly" id="ctxContact">—</div>
         </div>
         <div class="field">
           <label>Email</label>
@@ -260,16 +272,8 @@
           <div class="readonly" id="ctxPhone">—</div>
         </div>
         <div class="field">
-          <label>Brand</label>
-          <div class="readonly" id="ctxBrand">—</div>
-        </div>
-        <div class="field">
-          <label>RootApptID</label>
-          <div class="readonly" id="ctxRoot">—</div>
-        </div>
-        <div class="field">
           <label>Known SOs for this customer</label>
-          <input type="text" id="soSearch" placeholder="Search by SO or brand…" oninput="filterChips(this.value)">
+          <input type="text" id="soSearch" placeholder="Search by SO or description…" oninput="filterChips(this.value)">
           <div id="chipList" class="chips"></div>
           <div class="hint">Select one or more SOs to include. Each adds a line item.</div>
         </div>
@@ -394,11 +398,18 @@
     }
 
     function renderContext(ctx) {
-      document.getElementById('ctxCustomer').textContent = ctx.customerName || '—';
-      document.getElementById('ctxEmail').textContent = ctx.emailLower || '—';
-      document.getElementById('ctxPhone').textContent = ctx.phoneNorm || '—';
-      document.getElementById('ctxBrand').textContent = ctx.brand || '—';
-      document.getElementById('ctxRoot').textContent = ctx.RootApptID || '—';
+      const set = (id, value) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const text = String(value || '').trim();
+        el.textContent = text || '—';
+      };
+      set('ctxCustomer', ctx.businessName || ctx.customerName || '');
+      set('ctxCustomerId', ctx.customerId || '');
+      set('ctxSO', ctx.SO || '');
+      set('ctxContact', ctx.contactName || '');
+      set('ctxEmail', ctx.emailDisplay || ctx.emailLower || '');
+      set('ctxPhone', ctx.phoneDisplay || ctx.phoneNorm || '');
     }
 
     function renderLink() {
@@ -420,7 +431,7 @@
       const filter = state.chipFilter.trim().toLowerCase();
       state.knownSOs.forEach(entry => {
         if (filter) {
-          const hay = (entry.label + ' ' + (entry.productDescription || '')).toLowerCase();
+          const hay = (entry.label + ' ' + (entry.meta || '') + ' ' + (entry.productDescription || '')).toLowerCase();
           if (!hay.includes(filter)) return;
         }
         const el = document.createElement('div');
@@ -431,9 +442,12 @@
         main.textContent = entry.label || entry.so;
         const meta = document.createElement('div');
         meta.className = 'meta';
-        meta.textContent = entry.productDescription || '';
+        const metaText = entry.meta || entry.productDescription || '';
         el.appendChild(main);
-        if (entry.productDescription) el.appendChild(meta);
+        if (metaText) {
+          meta.textContent = metaText;
+          el.appendChild(meta);
+        }
         host.appendChild(el);
       });
     }
