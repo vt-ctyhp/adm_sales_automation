@@ -892,6 +892,72 @@ function findMasterRowBySO_(soRaw){
   throw new Error('SO not found: ' + soPretty_(soRaw || key));
 }
 
+function requireActiveMasterRow_(){
+  const ss = ss_();
+  const sheet = ss.getActiveSheet();
+  if (!sheet || sheet.getName() !== MASTER_SHEET) {
+    throw new Error('Select a row in 00_Master Wholesale before opening this dialog.');
+  }
+  const range = ss.getActiveRange();
+  if (!range) {
+    throw new Error('Select a row in 00_Master Wholesale before opening this dialog.');
+  }
+  const row = range.getRow();
+  if (row < 2) {
+    throw new Error('Select a data row in 00_Master Wholesale before opening this dialog.');
+  }
+  const last = sheet.getLastRow();
+  if (last < 2) {
+    throw new Error('00_Master Wholesale has no data rows.');
+  }
+  if (row > last) {
+    throw new Error('The selected row is empty.');
+  }
+  return row;
+}
+
+function buildStatusPayloadFromRow_(row){
+  const sh = sh_(MASTER_SHEET);
+  const last = sh.getLastRow();
+  if (row < 2 || row > last) {
+    throw new Error('Select a populated row in 00_Master Wholesale.');
+  }
+  const H = headerIndex1_(sh);
+  function getDisplay(label){
+    return H[label] ? sh.getRange(row, H[label]).getDisplayValue() : '';
+  }
+  function getValue(label){
+    return H[label] ? sh.getRange(row, H[label]).getValue() : '';
+  }
+  const soCell = getDisplay('SO#');
+  const statuses = {
+    salesStage: getDisplay('Sales Stage'),
+    conversionStatus: getDisplay('Conversion Status'),
+    customOrderStatus: getDisplay('Custom Order Status'),
+    inProductionStatus: getDisplay('In Production Status')
+  };
+  const dates = {
+    orderDate: formatDateYMD_(getValue('Order Date')),
+    threeDDeadline: formatDateYMD_(getValue('3D Deadline')),
+    productionDeadline: formatDateYMD_(getValue('Production Deadline'))
+  };
+  let trackerUrl = '';
+  if (H['Customer Sheet URL']) {
+    trackerUrl = extractUrlFromCell_(sh.getRange(row, H['Customer Sheet URL']));
+  }
+  return {
+    ok: true,
+    row,
+    soDisplay: soDisplay_(soCell || ''),
+    soPretty: soPretty_(soCell || ''),
+    statuses,
+    dates,
+    customerName: getDisplay('Customer Name'),
+    product: getDisplay('Product'),
+    trackerUrl
+  };
+}
+
 function admStatusUpdateBootstrap(){
   const options = {
     salesStage: collectColumnOptions_('Sales Stage', ['Lead','Quotation Sent','Order Won','Order Lost','In Production']),
@@ -899,10 +965,17 @@ function admStatusUpdateBootstrap(){
     customOrderStatus: collectColumnOptions_('Custom Order Status', ['3D Requested','3D In Progress','3D Complete','Production','Shipped']),
     inProductionStatus: collectColumnOptions_('In Production Status', ['Not Started','CAD','Casting','Setting','QA','Completed'])
   };
-  return {
+  const res = {
     options,
     today: Utilities.formatDate(new Date(), ADM_TZ, 'yyyy-MM-dd')
   };
+  try {
+    const row = requireActiveMasterRow_();
+    res.prefill = buildStatusPayloadFromRow_(row);
+  } catch (err) {
+    res.prefillError = err && err.message ? err.message : String(err);
+  }
+  return res;
 }
 
 function extractUrlFromCell_(range){
@@ -925,40 +998,7 @@ function extractUrlFromCell_(range){
 
 function admFetchStatusForSO(soRaw){
   const found = findMasterRowBySO_(soRaw);
-  const sh = sh_(MASTER_SHEET);
-  const H = headerIndex1_(sh);
-  function getDisplay(label){
-    return H[label] ? sh.getRange(found.row, H[label]).getDisplayValue() : '';
-  }
-  function getValue(label){
-    return H[label] ? sh.getRange(found.row, H[label]).getValue() : '';
-  }
-  const statuses = {
-    salesStage: getDisplay('Sales Stage'),
-    conversionStatus: getDisplay('Conversion Status'),
-    customOrderStatus: getDisplay('Custom Order Status'),
-    inProductionStatus: getDisplay('In Production Status')
-  };
-  const dates = {
-    orderDate: formatDateYMD_(getValue('Order Date')),
-    rdDeadline: formatDateYMD_(getValue('R&D Deadline')),
-    threeDDeadline: formatDateYMD_(getValue('3D Deadline')),
-    productionDeadline: formatDateYMD_(getValue('Production Deadline'))
-  };
-  let trackerUrl = '';
-  if (H['Customer Sheet URL']) {
-    trackerUrl = extractUrlFromCell_(sh.getRange(found.row, H['Customer Sheet URL']));
-  }
-  return {
-    ok: true,
-    soDisplay: found.soDisplay,
-    soPretty: found.soPretty,
-    statuses,
-    dates,
-    customerName: getDisplay('Customer Name'),
-    product: getDisplay('Product'),
-    trackerUrl
-  };
+  return buildStatusPayloadFromRow_(found.row);
 }
 
 function trackerIdFromUrl_(url){
@@ -987,7 +1027,6 @@ function updateCustomerTrackerSheet_(trackerUrl, customerName, product, soDispla
     ['Custom Order Status', payload.customOrderStatus || ''],
     ['In Production Status', payload.inProductionStatus || ''],
     ['Order Date', payload.orderDate || ''],
-    ['R&D Deadline', payload.rdDeadline || ''],
     ['3D Deadline', payload.threeDDeadline || ''],
     ['Production Deadline', payload.productionDeadline || '']
   ];
@@ -1001,16 +1040,19 @@ function updateCustomerTrackerSheet_(trackerUrl, customerName, product, soDispla
 
 function admSubmitStatusUpdate(payload){
   const stop = T('admSubmitStatusUpdate');
-  if (!payload || !payload.so) throw new Error('SO number is required.');
-  const found = findMasterRowBySO_(payload.so);
+  if (!payload || !payload.row) throw new Error('Active row is required.');
+  const row = Number(payload.row);
+  if (!row || row < 2) throw new Error('Active row is required.');
   const sh = sh_(MASTER_SHEET);
+  const last = sh.getLastRow();
+  if (row > last) throw new Error('Select a populated row in 00_Master Wholesale.');
   const H = headerIndex1_(sh);
   function put(label, value){
-    if (H[label]) sh.getRange(found.row, H[label]).setValue(value || '');
+    if (H[label]) sh.getRange(row, H[label]).setValue(value || '');
   }
   function putDate(label, ymd){
     if (!H[label]) return;
-    const rng = sh.getRange(found.row, H[label]);
+    const rng = sh.getRange(row, H[label]);
     if (!ymd) {
       rng.clearContent();
       return;
@@ -1027,29 +1069,29 @@ function admSubmitStatusUpdate(payload){
   put('Custom Order Status', payload.customOrderStatus || '');
   put('In Production Status', payload.inProductionStatus || '');
   putDate('Order Date', payload.orderDate || '');
-  putDate('R&D Deadline', payload.rdDeadline || '');
   putDate('3D Deadline', payload.threeDDeadline || '');
   putDate('Production Deadline', payload.productionDeadline || '');
 
   let trackerUrl = '';
   if (H['Customer Sheet URL']) {
-    trackerUrl = extractUrlFromCell_(sh.getRange(found.row, H['Customer Sheet URL']));
+    trackerUrl = extractUrlFromCell_(sh.getRange(row, H['Customer Sheet URL']));
   }
+  const soValue = H['SO#'] ? sh.getRange(row, H['SO#']).getDisplayValue() : '';
+  const soDisplay = soDisplay_(soValue || '');
   let sheetName = '';
   if (trackerUrl) {
     try {
       sheetName = updateCustomerTrackerSheet_(
         trackerUrl,
-        H['Customer Name'] ? sh.getRange(found.row, H['Customer Name']).getDisplayValue() : '',
-        H['Product'] ? sh.getRange(found.row, H['Product']).getDisplayValue() : '',
-        found.soDisplay,
+        H['Customer Name'] ? sh.getRange(row, H['Customer Name']).getDisplayValue() : '',
+        H['Product'] ? sh.getRange(row, H['Product']).getDisplayValue() : '',
+        soDisplay,
         {
           salesStage: payload.salesStage || '',
           conversionStatus: payload.conversionStatus || '',
           customOrderStatus: payload.customOrderStatus || '',
           inProductionStatus: payload.inProductionStatus || '',
           orderDate: payload.orderDate || '',
-          rdDeadline: payload.rdDeadline || '',
           threeDDeadline: payload.threeDDeadline || '',
           productionDeadline: payload.productionDeadline || ''
         }

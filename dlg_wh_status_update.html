@@ -27,18 +27,7 @@
 </head>
 <body>
   <h2>Update Client Status</h2>
-  <div class="box">
-    <div class="row">
-      <label style="flex:2">SO Number
-        <input id="soInput" type="text" placeholder="12.3456" autocomplete="off">
-      </label>
-      <div style="display:flex; align-items:flex-end; gap:8px;">
-        <button class="btn" id="loadBtn">Load Order</button>
-        <button class="btn secondary" id="resetBtn">Reset</button>
-      </div>
-    </div>
-    <div id="message" class="muted"></div>
-  </div>
+  <div id="message" class="muted" style="margin-bottom:12px;"></div>
 
   <div id="orderInfo" class="box hidden">
     <div><strong id="orderTitle"></strong></div>
@@ -66,9 +55,7 @@
       <label>Order Date
         <input type="date" id="orderDate">
       </label>
-      <label>R&amp;D Deadline
-        <input type="date" id="rdDeadline">
-      </label>
+      <div style="flex:1"></div>
     </div>
     <div class="row">
       <label>3D Deadline
@@ -95,7 +82,12 @@
     function setMessage(text, type) {
       const el = $('message');
       el.textContent = text || '';
-      el.className = text ? ('muted ' + (type || '')) : 'muted';
+      el.className = 'muted';
+      if (text && type) {
+        el.className += ' ' + type;
+      } else if (!text) {
+        el.className = 'muted';
+      }
     }
 
     function fillSelectOptions(select, options, currentValue) {
@@ -130,10 +122,20 @@
     }
 
     function loadBootstrap() {
+      setMessage('Loading…', '');
       google.script.run.withSuccessHandler(data => {
         BOOT = data || {};
-        setMessage('Enter an SO number to begin.', '');
+        if (BOOT.prefill) {
+          populateForm(BOOT.prefill);
+        } else if (BOOT.prefillError) {
+          resetForm();
+          setMessage(BOOT.prefillError, 'err');
+        } else {
+          resetForm();
+          setMessage('Select a row in 00_Master Wholesale before opening this dialog.', 'err');
+        }
       }).withFailureHandler(err => {
+        resetForm();
         setMessage(err && err.message ? err.message : 'Failed to load options.', 'err');
       }).admStatusUpdateBootstrap();
     }
@@ -142,7 +144,8 @@
       if (!payload) return;
       CURRENT = payload;
       $('orderInfo').classList.remove('hidden');
-      $('orderTitle').textContent = payload.soDisplay || '';
+      const title = payload.soDisplay || (payload.row ? `Row ${payload.row}` : 'Selected Order');
+      $('orderTitle').textContent = title;
       const details = [];
       if (payload.customerName) details.push(payload.customerName);
       if (payload.product) details.push(payload.product);
@@ -155,7 +158,6 @@
       fillSelectOptions($('inProductionStatus'), opts.inProductionStatus, payload.statuses.inProductionStatus || '');
 
       $('orderDate').value = payload.dates.orderDate || '';
-      $('rdDeadline').value = payload.dates.rdDeadline || '';
       $('threeDDeadline').value = payload.dates.threeDDeadline || '';
       $('productionDeadline').value = payload.dates.productionDeadline || '';
 
@@ -163,38 +165,19 @@
       setMessage('Status loaded. Update fields and click Save.', 'ok');
     }
 
-    function loadOrder() {
-      const so = $('soInput').value.trim();
-      if (!so) {
-        setMessage('Enter an SO number first.', 'err');
-        return;
-      }
-      setMessage('Loading…', '');
-      $('statusForm').classList.add('hidden');
-      $('orderInfo').classList.add('hidden');
-      google.script.run.withSuccessHandler(res => {
-        populateForm(res);
-      }).withFailureHandler(err => {
-        resetForm();
-        const msg = err && err.message ? err.message : 'Could not locate that SO.';
-        setMessage(msg, 'err');
-      }).admFetchStatusForSO(so);
-    }
-
     function submitForm(evt) {
       evt.preventDefault();
       if (!CURRENT) {
-        setMessage('Load an SO before saving.', 'err');
+        setMessage('Select an order before saving.', 'err');
         return;
       }
       const payload = {
-        so: CURRENT.soDisplay || $('soInput').value.trim(),
+        row: CURRENT.row,
         salesStage: $('salesStage').value,
         conversionStatus: $('conversionStatus').value,
         customOrderStatus: $('customOrderStatus').value,
         inProductionStatus: $('inProductionStatus').value,
         orderDate: $('orderDate').value,
-        rdDeadline: $('rdDeadline').value,
         threeDDeadline: $('threeDDeadline').value,
         productionDeadline: $('productionDeadline').value
       };
@@ -219,30 +202,12 @@
       }).admSubmitStatusUpdate(payload);
     }
 
-    $('loadBtn').addEventListener('click', e => {
-      e.preventDefault();
-      loadOrder();
-    });
-
-    $('resetBtn').addEventListener('click', e => {
-      e.preventDefault();
-      $('soInput').value = '';
-      resetForm();
-    });
-
     $('cancelBtn').addEventListener('click', e => {
       e.preventDefault();
       google.script.host.close();
     });
 
     $('statusForm').addEventListener('submit', submitForm);
-    $('soInput').addEventListener('keydown', e => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        loadOrder();
-      }
-    });
-
     resetForm();
     loadBootstrap();
   </script>
