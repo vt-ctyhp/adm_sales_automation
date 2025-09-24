@@ -170,8 +170,18 @@
       const title = payload.soDisplay || (payload.row ? `Row ${payload.row}` : 'Selected Order');
       $('orderTitle').textContent = title;
       const details = [];
-      if (payload.customerName) details.push(payload.customerName);
-      if (payload.product) details.push(payload.product);
+      if (payload.soNumber) details.push(`SO#: ${payload.soNumber}`);
+      if (payload.customerId) details.push(`Customer ID: ${payload.customerId}`);
+      if (payload.businessName) {
+        details.push(payload.businessName);
+      } else if (payload.customerName) {
+        details.push(payload.customerName);
+      }
+      if (payload.productDescription) {
+        details.push(payload.productDescription);
+      } else if (payload.product) {
+        details.push(payload.product);
+      }
       $('orderDetails').textContent = details.join(' • ');
 
       const opts = (BOOT && BOOT.options) || {};

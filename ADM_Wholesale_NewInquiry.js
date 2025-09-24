@@ -924,11 +924,32 @@ function buildStatusPayloadFromRow_(row){
     throw new Error('Select a populated row in 00_Master Wholesale.');
   }
   const H = headerIndex1_(sh);
+  const lastCol = sh.getLastColumn();
+  const rowRange = sh.getRange(row, 1, 1, lastCol);
+  const displayRow = (rowRange.getDisplayValues()[0]) || [];
+  const valueRow = (rowRange.getValues()[0]) || [];
   function getDisplay(label){
-    return H[label] ? sh.getRange(row, H[label]).getDisplayValue() : '';
+    const col = H[label] || 0;
+    if (!col) return '';
+    const val = displayRow[col - 1];
+    return val == null ? '' : String(val);
   }
   function getValue(label){
-    return H[label] ? sh.getRange(row, H[label]).getValue() : '';
+    const col = H[label] || 0;
+    if (!col) return '';
+    return valueRow[col - 1];
+  }
+  function getDisplayMulti(labels){
+    const list = Array.isArray(labels) ? labels : [labels];
+    for (let i = 0; i < list.length; i++) {
+      const col = H[list[i]] || 0;
+      if (!col) continue;
+      const val = displayRow[col - 1];
+      if (val != null && String(val).trim() !== '') {
+        return String(val);
+      }
+    }
+    return '';
   }
   const soCell = getDisplay('SO#');
   const statuses = {
@@ -944,19 +965,23 @@ function buildStatusPayloadFromRow_(row){
   };
   let trackerUrl = '';
   if (H['Customer Order Tracker URL']) {
-    trackerUrl = extractUrlFromCell_(sh.getRange(row, H['Customer Order Tracker URL']));
+    trackerUrl = extractUrlFromCell_(rowRange.getCell(1, H['Customer Order Tracker URL']));
   } else if (H['Customer Sheet URL']) {
-    trackerUrl = extractUrlFromCell_(sh.getRange(row, H['Customer Sheet URL']));
+    trackerUrl = extractUrlFromCell_(rowRange.getCell(1, H['Customer Sheet URL']));
   }
   return {
     ok: true,
     row,
     soDisplay: soDisplay_(soCell || ''),
     soPretty: soPretty_(soCell || ''),
+    soNumber: soCell || '',
     statuses,
     dates,
-    customerName: getDisplay('Customer Name'),
-    product: getDisplay('Product'),
+    customerId: getDisplayMulti(['Customer ID','Customer (Company) ID','CustomerID','ClientID','Account Code']),
+    businessName: getDisplayMulti(['Business Name']),
+    customerName: getDisplayMulti(['Customer Name','Business Name']),
+    product: getDisplayMulti(['Product']),
+    productDescription: getDisplayMulti(['Product Description','Prod Description','Product','Description','Short Description']),
     trackerUrl
   };
 }
@@ -1077,8 +1102,19 @@ function buildStatusSummary_(before, after, row){
   };
   const detailSource = after || before || {};
   const details = [];
-  if (detailSource.customerName) details.push(detailSource.customerName);
-  if (detailSource.product) details.push(detailSource.product);
+  if (detailSource.businessName) {
+    details.push(detailSource.businessName);
+  } else if (detailSource.customerName) {
+    details.push(detailSource.customerName);
+  }
+  if (detailSource.customerId) {
+    details.push('Customer ID: ' + detailSource.customerId);
+  }
+  if (detailSource.productDescription) {
+    details.push(detailSource.productDescription);
+  } else if (detailSource.product) {
+    details.push(detailSource.product);
+  }
   summary.details = details;
 
   const changes = [];
