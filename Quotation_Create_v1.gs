@@ -2,7 +2,7 @@
  * Create Quotation flow — dialog + document writer
  */
 
-const QC_MASTER_TAB_NAME = '00_Master Appointments';
+const QC_MASTER_TAB_NAME = '00_Master Wholesale';
 
 const QC_SO_ALIASES = ['SO#', 'SO', 'SO Number'];
 const QC_CUSTOMER_NAME_ALIASES = ['Customer Name', 'Customer', 'Client Name'];
