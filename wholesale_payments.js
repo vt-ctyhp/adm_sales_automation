@@ -5,7 +5,7 @@
 const SP = PropertiesService.getScriptProperties();
 
 // ============================= CONFIG =============================
-const WH_LEDGER_TAB_NAME         = SP.getProperty('WH_LEDGER_TAB_NAME') || '400_payments ledger';
+const WH_LEDGER_TAB_NAME         = SP.getProperty('WH_LEDGER_TAB_NAME') || '400_Payments Ledger';
 const WH_CRM_TAB_NAME            = SP.getProperty('WH_CRM_TAB_NAME') || '01_CRM';
 const WH_DEFAULT_SHIP_PER_ORDER  = num_(SP.getProperty('WH_DEFAULT_SHIP_PER_ORDER'), 50);
 const WH_SHIP_THRESHOLD_SUBTOTAL = num_(SP.getProperty('WH_SHIP_THRESHOLD_SUBTOTAL'), 2000);
@@ -674,38 +674,386 @@ function wh_markSuperseded_(docNumber, action){
 
 // ============================= SUMMARY =============================
 function wh_getSummary(params){
-  const scope = String(params.scope||'SO').toUpperCase();
-  const sh = ensureLedger_(); const lr = sh.getLastRow(), lc = sh.getLastColumn();
-  if (lr < 2) return { scope, items:[], totals:{} };
+  params = params || {};
+  const debugging = ADM_isDebug();
+  let scope = String(params.scope||'').trim().toUpperCase();
+  let soNumber = String(params.soNumber||'').trim();
+  let customerId = String(params.customerId||'').trim();
+  let invoiceGroupId = String(params.invoiceGroupId||'').trim();
+
+  if (debugging) {
+    dbg('wh_getSummary: start', { params, scope, soNumber, customerId, invoiceGroupId });
+  }
+
+  if (!soNumber || !customerId) {
+    const ctx = readActiveContext_();
+    if (!soNumber && ctx.soNumber) soNumber = String(ctx.soNumber||'').trim();
+    if (!customerId && ctx.customerId) customerId = String(ctx.customerId||'').trim();
+  }
+
+  if (!scope) {
+    if (invoiceGroupId) {
+      scope = 'GROUP';
+    } else if (soNumber) {
+      scope = 'SO';
+    } else if (customerId) {
+      scope = 'CUSTOMER';
+    } else {
+      scope = 'SO';
+    }
+  }
+
+  if (scope === 'SO' && !soNumber && customerId) {
+    scope = 'CUSTOMER';
+  }
+
+  if (scope === 'CUSTOMER' && !customerId && soNumber) {
+    scope = 'SO';
+  }
+
+  if (debugging) {
+    dbg('wh_getSummary: resolved scope', { scope, soNumber, customerId, invoiceGroupId });
+  }
+
+  const sh = ensureLedger_();
+  const lr = sh.getLastRow(), lc = sh.getLastColumn();
+  if (lr < 2) {
+    if (debugging) {
+      dbg('wh_getSummary: ledger empty', { lastRow: lr, lastColumn: lc });
+    }
+    return { scope, items:[], totals:{}, groups:[], warnings:[] };
+  }
 
   const hdr = sh.getRange(1,1,1,lc).getDisplayValues()[0].map(s=>String(s||'').trim());
   const H = headerMap_(hdr);
   const vals = sh.getRange(2,1,lr-1,lc).getValues();
 
-  const items = [];
-  for (let i=0;i<vals.length;i++){
-    const r = vals[i]; const o={}; Object.keys(H).forEach(k=>o[k]=r[H[k]-1]);
-    const match = scope==='SO'       ? (String(o.SOsCSV||'').split(',').map(s=>s.trim()).includes(String(params.soNumber||'').trim()))
-                : scope==='CUSTOMER' ? (String(o.CustomerID||'').trim() === String(params.customerId||'').trim())
-                : scope==='GROUP'    ? (String(o.InvoiceGroupID||'').trim() === String(params.invoiceGroupId||'').trim())
-                : false;
-    if (match) items.push(o);
+  if (debugging) {
+    dbg('wh_getSummary: ledger headers loaded', { headerCount: hdr.length, headers: hdr });
+    dbg('wh_getSummary: scanning rows', { rowCount: vals.length });
   }
-  const receipts = items.filter(it => String(it.DocType||'').toUpperCase()==='RECEIPT')
-                        .reduce((s,it)=> s + num_(it.AmountGross,0),0);
-  const credits  = items.filter(it => String(it.DocType||'').toUpperCase()==='CREDIT')
-                        .reduce((s,it)=> s + num_(it.AmountGross,0),0);
-  const applied  = items.filter(it => String(it.DocType||'').toUpperCase()==='CREDIT-APPLIED')
-                        .reduce((s,it)=> s + num_(it.AmountGross,0),0);
-  return {
-    scope, items,
-    totals: {
-      receipts: round2_(receipts),
-      creditsIssued: round2_(credits),
-      creditsApplied: round2_(applied),
-      creditUnappliedEstimate: round2_(credits - applied)
+
+  const items = [];
+  const tz = Session.getScriptTimeZone() || 'UTC';
+  const now = new Date();
+  const nowMs = now.getTime();
+  const groupsByKey = new Map();
+  const activeInvoicesBySO = new Map();
+  const globalTotals = {
+    invoiced: 0,
+    receipts: 0,
+    creditsIssued: 0,
+    creditsApplied: 0
+  };
+
+  for (let i=0;i<vals.length;i++){
+    const r = vals[i];
+    const raw = {};
+    Object.keys(H).forEach(k=>raw[k]=r[H[k]-1]);
+
+    const soQuery = soNumber;
+    const ledgerSOs = parseSummarySOList_(raw);
+    const ledgerCustomerIds = parseSummaryCustomerIds_(raw);
+    const ledgerGroupId = String(raw.InvoiceGroupID||'').trim();
+    let match = false;
+    let matchReason = '';
+
+    if (scope === 'SO') {
+      if (!soQuery) {
+        matchReason = 'SO scope but soNumber missing';
+      } else if (ledgerSOs.some(so => soEq_(so, soQuery))) {
+        match = true;
+        matchReason = 'SO matched';
+      } else {
+        matchReason = 'SO mismatch';
+      }
+    } else if (scope === 'CUSTOMER') {
+      if (!customerId) {
+        matchReason = 'CUSTOMER scope but customerId missing';
+      } else if (ledgerCustomerIds.some(id => idEq_(id, customerId))) {
+        match = true;
+        matchReason = 'Customer matched';
+      } else {
+        matchReason = 'Customer mismatch';
+      }
+    } else if (scope === 'GROUP') {
+      if (!invoiceGroupId) {
+        matchReason = 'GROUP scope but invoiceGroupId missing';
+      } else if (idEq_(ledgerGroupId, invoiceGroupId)) {
+        match = true;
+        matchReason = 'Group matched';
+      } else {
+        matchReason = 'Group mismatch';
+      }
+    }
+
+    const docTypeRaw = String(raw.DocType||'');
+    const docTypeUpper = docTypeRaw.toUpperCase();
+    const amountInfo = resolveSummaryAmount_(raw, docTypeUpper);
+
+    if (debugging) {
+      const dbgRow = {
+        rowIndex: i + 2,
+        paymentId: raw.PaymentID || '',
+        docNumber: raw.DocNumber || '',
+        docType: raw.DocType || '',
+        amount: amountInfo.amount,
+        amountSource: amountInfo.source,
+        ledgerSOs,
+        ledgerCustomerIds,
+        ledgerGroupId,
+        scope,
+        soQuery,
+        customerId,
+        invoiceGroupId,
+        match,
+        matchReason
+      };
+      dbg('wh_getSummary: ledger row inspected', dbgRow);
+    }
+
+    if (!match) continue;
+
+    items.push(raw);
+
+    const docFlavor = String(raw.DocFlavor||'');
+    const docStatus = String(raw.DocStatus||'');
+    const amount = amountInfo.amount;
+
+    const docDate = coerceDate_(raw.DOC_DATE || raw.PaymentDateTime || raw.SubmittedAt);
+    const paymentDate = coerceDate_(raw.PaymentDateTime);
+    const dueDate = coerceDate_(raw.DueDate);
+
+    const docDateMs = docDate ? docDate.getTime() : (paymentDate ? paymentDate.getTime() : null);
+    const dueDateMs = dueDate ? dueDate.getTime() : null;
+
+    const soNumbers = parseSummarySOList_(raw);
+
+    const docOut = {
+      docType: docTypeRaw,
+      docFlavor,
+      docLabel: buildSummaryDocLabel_(docTypeRaw, docFlavor),
+      docNumber: String(raw.DocNumber||'').trim(),
+      docStatus,
+      displayDate: formatDateForSummary_(docDate || paymentDate || raw.SubmittedAt, tz),
+      docDateDisplay: formatDateForSummary_(docDate, tz),
+      paymentDateDisplay: formatDateForSummary_(paymentDate, tz),
+      dueDateDisplay: formatDateForSummary_(dueDate, tz),
+      docDateIso: docDate ? docDate.toISOString() : '',
+      dueDateIso: dueDate ? dueDate.toISOString() : '',
+      amount,
+      method: String(raw.Method||'').trim(),
+      pdfUrl: String(raw.PDF_URL||'').trim(),
+      invoiceGroupId: String(raw.InvoiceGroupID||'').trim(),
+      soNumbers,
+      isInvoice: isInvoiceDoc_(docTypeUpper),
+      isReceipt: isReceiptDoc_(docTypeUpper),
+      isCredit: docTypeUpper === 'CREDIT',
+      isCreditApplied: docTypeUpper === 'CREDIT-APPLIED',
+      isActiveInvoice: false,
+      dueDateMs,
+      activityMs: docDateMs,
+      notes: String(raw.Notes||'').trim(),
+      amountSource: amountInfo.source
+    };
+
+    docOut.isActiveInvoice = docOut.isInvoice && isActiveInvoiceStatus_(docStatus);
+
+    const groupKey = docOut.invoiceGroupId || '__' + (docOut.docNumber || raw.PaymentID || ('ROW'+(i+2)));
+    if (!groupsByKey.has(groupKey)) {
+      groupsByKey.set(groupKey, {
+        key: groupKey,
+        invoiceGroupId: docOut.invoiceGroupId,
+        docs: [],
+        soNumbers: new Set(),
+        totals: { invoiced: 0, receipts: 0, creditsIssued: 0, creditApplied: 0 },
+        dueDates: [],
+        latestActivityMs: docDateMs || 0,
+        warnings: []
+      });
+    }
+    const group = groupsByKey.get(groupKey);
+    group.docs.push(docOut);
+    if (docOut.activityMs && docOut.activityMs > (group.latestActivityMs||0)) {
+      group.latestActivityMs = docOut.activityMs;
+    }
+    soNumbers.forEach(so => { if (so) group.soNumbers.add(so); });
+
+    if (docOut.isInvoice) {
+      group.totals.invoiced = round2_(group.totals.invoiced + amount);
+      globalTotals.invoiced = round2_(globalTotals.invoiced + amount);
+      if (dueDate) group.dueDates.push(dueDate);
+    } else if (docOut.isReceipt) {
+      group.totals.receipts = round2_(group.totals.receipts + amount);
+      globalTotals.receipts = round2_(globalTotals.receipts + amount);
+    } else if (docOut.isCreditApplied) {
+      group.totals.creditApplied = round2_(group.totals.creditApplied + amount);
+      globalTotals.creditsApplied = round2_(globalTotals.creditsApplied + amount);
+    } else if (docOut.isCredit) {
+      group.totals.creditsIssued = round2_(group.totals.creditsIssued + amount);
+      globalTotals.creditsIssued = round2_(globalTotals.creditsIssued + amount);
+    }
+
+    if (docOut.isActiveInvoice) {
+      soNumbers.forEach(so => {
+        if (!so) return;
+        if (!activeInvoicesBySO.has(so)) activeInvoicesBySO.set(so, []);
+        activeInvoicesBySO.get(so).push({
+          docNumber: docOut.docNumber,
+          invoiceGroupId: docOut.invoiceGroupId,
+          status: docStatus
+        });
+      });
+    }
+  }
+
+  const groups = [];
+  const generalWarnings = [];
+
+  groupsByKey.forEach(group => {
+    const soNumbers = Array.from(group.soNumbers).filter(Boolean).sort();
+    const balance = round2_(group.totals.invoiced - (group.totals.receipts + group.totals.creditApplied));
+    const dueDateMsList = group.dueDates.map(d=>d.getTime()).sort((a,b)=>a-b);
+    const overdueDocs = group.docs.filter(doc => doc.isInvoice && doc.isActiveInvoice && doc.dueDateMs && doc.dueDateMs < nowMs);
+    const hasOverdue = balance > 0 && overdueDocs.length > 0;
+    const oldestOverdueMs = overdueDocs.length ? Math.min.apply(null, overdueDocs.map(doc=>doc.dueDateMs)) : null;
+    const oldestOverdueDisplay = oldestOverdueMs ? formatDateForSummary_(new Date(oldestOverdueMs), tz) : '';
+
+    if (hasOverdue && oldestOverdueDisplay) {
+      group.warnings.push(`Outstanding balance is past due (oldest due ${oldestOverdueDisplay}).`);
+    }
+
+    group.docs.forEach(doc => {
+      doc.isOverdue = hasOverdue && doc.isInvoice && doc.isActiveInvoice && doc.dueDateMs && doc.dueDateMs < nowMs;
+    });
+
+    const groupLabel = group.invoiceGroupId || (soNumbers.length ? `SO ${soNumbers.join(', ')}` : 'Ungrouped');
+
+    groups.push({
+      key: group.key,
+      invoiceGroupId: group.invoiceGroupId,
+      label: groupLabel,
+      soNumbers,
+      totals: {
+        invoiced: round2_(group.totals.invoiced),
+        receipts: round2_(group.totals.receipts),
+        creditApplied: round2_(group.totals.creditApplied),
+        creditsIssued: round2_(group.totals.creditsIssued),
+        balance
+      },
+      hasOverdue,
+      oldestOverdueDisplay,
+      nextDueDateDisplay: dueDateMsList.length ? formatDateForSummary_(new Date(dueDateMsList[0]), tz) : '',
+      latestActivityMs: group.latestActivityMs || 0,
+      warnings: group.warnings.slice(),
+      docs: group.docs.map(doc => ({
+        docType: doc.docType,
+        docFlavor: doc.docFlavor,
+        docLabel: doc.docLabel,
+        docNumber: doc.docNumber,
+        docStatus: doc.docStatus,
+        displayDate: doc.displayDate,
+        docDateDisplay: doc.docDateDisplay,
+        paymentDateDisplay: doc.paymentDateDisplay,
+        dueDateDisplay: doc.dueDateDisplay,
+        docDateIso: doc.docDateIso,
+        dueDateIso: doc.dueDateIso,
+        amount: doc.amount,
+        method: doc.method,
+        pdfUrl: doc.pdfUrl,
+        isInvoice: doc.isInvoice,
+        isReceipt: doc.isReceipt,
+        isCredit: doc.isCredit,
+        isCreditApplied: doc.isCreditApplied,
+        isOverdue: doc.isOverdue,
+        isActiveInvoice: doc.isActiveInvoice,
+        soNumbers: doc.soNumbers,
+        amountFormatted: formatCurrency_(doc.amount),
+        amountSource: doc.amountSource
+      }))
+    });
+
+    if (hasOverdue) {
+      const balanceText = formatCurrency_(balance);
+      generalWarnings.push(`Invoice group ${groupLabel} has an outstanding balance of ${balanceText} that is past due${oldestOverdueDisplay ? ' (oldest due '+oldestOverdueDisplay+')' : ''}.`);
+    }
+  });
+
+  groups.sort((a,b)=> (b.latestActivityMs||0) - (a.latestActivityMs||0));
+
+  activeInvoicesBySO.forEach((docs, so) => {
+    if (docs.length <= 1) return;
+    const docList = docs.map(d => d.docNumber || d.invoiceGroupId || 'invoice').join(', ');
+    generalWarnings.push(`SO ${so} has multiple active invoices (${docList}).`);
+  });
+
+  const totals = {
+    invoiced: round2_(globalTotals.invoiced),
+    receipts: round2_(globalTotals.receipts),
+    creditsIssued: round2_(globalTotals.creditsIssued),
+    creditsApplied: round2_(globalTotals.creditsApplied),
+    balance: round2_(globalTotals.invoiced - (globalTotals.receipts + globalTotals.creditsApplied))
+  };
+
+  const warnings = dedupeSummaryWarnings_(generalWarnings);
+
+  const docsFlat = [];
+  groups.forEach(group => {
+    const groupLabel = group.label || '';
+    const groupKey = group.key || group.invoiceGroupId || '';
+    const invoiceGroupId = group.invoiceGroupId || '';
+    const docs = Array.isArray(group.docs) ? group.docs : [];
+    docs.forEach(doc => {
+      docsFlat.push({
+        groupKey,
+        groupLabel,
+        invoiceGroupId,
+        docType: doc.docType,
+        docFlavor: doc.docFlavor,
+        docLabel: doc.docLabel,
+        docNumber: doc.docNumber,
+        docStatus: doc.docStatus,
+        displayDate: doc.displayDate,
+        dueDateDisplay: doc.dueDateDisplay,
+        amount: doc.amount,
+        method: doc.method,
+        pdfUrl: doc.pdfUrl,
+        amountSource: doc.amountSource
+      });
+    });
+  });
+
+  const meta = {
+    matchedCount: items.length,
+    groupCount: groups.length,
+    filters: {
+      scope,
+      soNumber,
+      customerId,
+      invoiceGroupId
     }
   };
+
+  if (debugging) {
+    dbg('wh_getSummary: summary built', {
+      scope,
+      itemCount: items.length,
+      groupCount: groups.length,
+      totals,
+      warnings,
+      meta
+    });
+  }
+
+  return sanitizeForClient_({
+    scope,
+    items,
+    totals,
+    groups,
+    warnings,
+    meta,
+    docs: docsFlat
+  });
 }
 
 // ============================= CREDIT APPLY =============================
@@ -727,6 +1075,188 @@ function wh_applyCreditNow(payload){
   setIf_(row,H,'SubmittedAt', new Date());
   sh.appendRow(row);
   return { ok:true };
+}
+
+function parseSummarySOList_(row){
+  if (!row || typeof row !== 'object') return [];
+  const out = [];
+  const seen = new Set();
+  const add = so => {
+    const val = String(so||'').trim();
+    const norm = normalizeSo_(val);
+    if (!norm || seen.has(norm)) return;
+    seen.add(norm);
+    out.push(val);
+  };
+
+  const addFromCsv = value => {
+    String(value||'')
+      .replace(/[|;]/g, ',')
+      .split(/[\n,]/)
+      .map(part => String(part||'').split(':')[0].trim())
+      .forEach(part => add(part));
+  };
+
+  const addFromJson = value => {
+    if (!value) return;
+    try {
+      const parsed = (typeof value === 'string') ? JSON.parse(value) : value;
+      if (Array.isArray(parsed)) {
+        parsed.forEach(add);
+      } else if (parsed && typeof parsed === 'object') {
+        Object.keys(parsed).forEach(add);
+      }
+    } catch(_) {
+      addFromCsv(value);
+    }
+  };
+
+  const keys = Object.keys(row);
+  keys.forEach(key => {
+    const lower = String(key||'').toLowerCase();
+    const keyNorm = lower.replace(/[^a-z0-9]/g, '');
+    if (keyNorm === 'primaryso' || keyNorm === 'primaryso#') {
+      add(row[key]);
+    } else if (keyNorm === 'soscsv' || keyNorm === 'solist' || keyNorm === 'sos') {
+      addFromCsv(row[key]);
+    } else if (keyNorm === 'allocationsjson' || keyNorm === 'sojson') {
+      addFromJson(row[key]);
+    }
+  });
+
+  // Explicit known columns for clarity
+  add(row.PrimarySO);
+  addFromCsv(row.SOsCSV);
+  addFromCsv(row.SO_List);
+  addFromJson(row.AllocationsJSON);
+
+  return out;
+}
+
+function parseSummaryCustomerIds_(row){
+  if (!row || typeof row !== 'object') return [];
+  const out = [];
+  const seen = new Set();
+  const add = id => {
+    const val = String(id||'').trim();
+    const norm = normalizeId_(val);
+    if (!norm || seen.has(norm)) return;
+    seen.add(norm);
+    out.push(val);
+  };
+
+  const keys = Object.keys(row);
+  keys.forEach(key => {
+    const lower = String(key||'').toLowerCase();
+    const keyNorm = lower.replace(/[^a-z0-9]/g, '');
+    if (keyNorm === 'customerid' || keyNorm === 'companyid' || keyNorm === 'customercompanyid') {
+      add(row[key]);
+    }
+  });
+
+  add(row.CustomerID);
+  add(row.CompanyID);
+
+  return out;
+}
+
+function buildSummaryDocLabel_(docType, docFlavor){
+  const parts = [String(docType||'').trim(), String(docFlavor||'').trim()].filter(Boolean);
+  return parts.join(' — ');
+}
+
+function resolveSummaryAmount_(row, docTypeUpper){
+  const docType = String(docTypeUpper||'').toUpperCase();
+  const gross = numFromLedger_(row ? row.AmountGross : null);
+  const net = numFromLedger_(row ? row.AmountNet : null);
+  const subtotal = numFromLedger_(row ? row.LinesSubtotal : null);
+  const shipping = numFromLedger_(row ? row.ShippingTotal : null);
+
+  const finish = (amount, source) => ({ amount: round2_(amount||0), source });
+
+  if (isInvoiceDoc_(docType)) {
+    if (gross !== null && gross !== 0) return finish(gross, 'AmountGross');
+    if (net !== null && net !== 0) return finish(net, 'AmountNet');
+
+    const hasSubtotalOrShipping = (subtotal !== null) || (shipping !== null);
+
+    if (hasSubtotalOrShipping) {
+      const sum = (subtotal||0) + (shipping||0);
+      if (sum !== 0) return finish(sum, 'LinesSubtotal/ShippingTotal');
+    }
+
+    const linesTotal = sumLedgerLines_(row ? row.LinesJSON : null);
+    if (linesTotal !== null) {
+      const combined = linesTotal + (shipping||0);
+      if (combined !== 0) {
+        return finish(combined, shipping !== null ? 'LinesJSON+ShippingTotal' : 'LinesJSON');
+      }
+    }
+
+    if (hasSubtotalOrShipping) {
+      const sum = (subtotal||0) + (shipping||0);
+      return finish(sum, 'LinesSubtotal/ShippingTotal');
+    }
+
+    if (gross !== null) return finish(gross, 'AmountGross');
+    if (net !== null) return finish(net, 'AmountNet');
+  } else {
+    if (gross !== null && gross !== 0) return finish(gross, 'AmountGross');
+    if (net !== null && net !== 0) return finish(net, 'AmountNet');
+    if (gross !== null) return finish(gross, 'AmountGross');
+    if (net !== null) return finish(net, 'AmountNet');
+  }
+
+  return finish(0, 'Default0');
+}
+
+function isInvoiceDoc_(docTypeUpper){
+  return String(docTypeUpper||'').toUpperCase().indexOf('INVOICE') >= 0;
+}
+
+function isReceiptDoc_(docTypeUpper){
+  return String(docTypeUpper||'').toUpperCase().indexOf('RECEIPT') >= 0;
+}
+
+function isActiveInvoiceStatus_(status){
+  const s = String(status||'').toUpperCase();
+  if (!s) return true;
+  const inactiveFlags = ['VOID','VOIDED','SUPERSEDED','SUPERSEDE','CANCELLED','CANCELED','SUPERCEDED'];
+  return !inactiveFlags.some(flag => s.indexOf(flag) >= 0);
+}
+
+function coerceDate_(value){
+  if (value instanceof Date) {
+    return isNaN(value.getTime()) ? null : value;
+  }
+  if (value === null || value === undefined || value === '') return null;
+  const d = new Date(value);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function formatDateForSummary_(value, tz){
+  const d = coerceDate_(value);
+  if (!d) return '';
+  return Utilities.formatDate(d, tz || Session.getScriptTimeZone() || 'UTC', 'yyyy-MM-dd');
+}
+
+function formatCurrency_(amount){
+  const n = num_(amount, NaN);
+  if (!isFinite(n)) return '';
+  const fixed = round2_(n).toFixed(2);
+  return '$' + fixed.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+function dedupeSummaryWarnings_(warnings){
+  const seen = new Set();
+  const out = [];
+  (warnings||[]).forEach(msg => {
+    const text = String(msg||'').trim();
+    if (!text || seen.has(text)) return;
+    seen.add(text);
+    out.push(text);
+  });
+  return out;
 }
 
 function getUnappliedCredit_(customerId){
@@ -1304,7 +1834,101 @@ function hIndex_(hdr){ const H={}; (hdr||[]).forEach((h,i)=>{ const k=String(h||
 function pickH_(H, names){ for (const n of (names||[])) if (H[n]) return H[n]; return 0; }
 function headerMap_(hdrRow){ const m={}; hdrRow.forEach((h,i)=>{ m[String(h||'').trim()] = i+1; }); return m; }
 function setIf_(row,H,key,val){ if (H[key]) row[H[key]-1] = val; }
-function soEq_(a,b){ const sa=String(a||'').trim(), sb=String(b||'').trim(); if (sa===sb) return true; const na=Number(sa.replace(/[^\d.]/g,'')), nb=Number(sb.replace(/[^\d.]/g,'')); return (isFinite(na)&&isFinite(nb)) ? (Math.abs(na-nb)<1e-9) : false; }
+
+function numFromLedger_(value){
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'number') return isFinite(value) ? value : null;
+  if (value instanceof Date) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  const cleaned = text.replace(/[^0-9.\-]/g, '');
+  if (!cleaned) return null;
+  const parsed = parseFloat(cleaned);
+  return isFinite(parsed) ? parsed : null;
+}
+
+function sumLedgerLines_(linesValue){
+  if (linesValue === null || linesValue === undefined) return null;
+  let parsed = linesValue;
+  if (typeof parsed === 'string') {
+    const trimmed = parsed.trim();
+    if (!trimmed) return null;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  if (!Array.isArray(parsed)) return null;
+
+  let total = 0;
+  let hasValue = false;
+
+  parsed.forEach(line => {
+    if (!line || typeof line !== 'object') return;
+
+    const explicit = numFromLedger_(line.total || line.lineTotal || line.extended || line.extendedAmount || line.amountTotal);
+    if (explicit !== null) {
+      total += explicit;
+      hasValue = true;
+      return;
+    }
+
+    const qty = numFromLedger_(line.qty ?? line.quantity ?? line.qtyOrdered ?? line.qtyBilled ?? line.units);
+    const amt = numFromLedger_(line.amt ?? line.amount ?? line.rate ?? line.price ?? line.unitPrice);
+
+    let lineTotal = null;
+    if (qty !== null && amt !== null) {
+      lineTotal = qty * amt;
+    } else if (amt !== null) {
+      lineTotal = amt;
+    }
+
+    if (lineTotal !== null) {
+      total += lineTotal;
+      hasValue = true;
+    }
+  });
+
+  return hasValue ? total : null;
+}
+function normalizeSo_(value){
+  const raw = String(value||'').trim().toUpperCase();
+  if (!raw) return '';
+  return raw.replace(/[^A-Z0-9]/g, '');
+}
+
+function normalizeId_(value){
+  const raw = String(value||'').trim().toUpperCase();
+  if (!raw) return '';
+  return raw.replace(/[^A-Z0-9]/g, '');
+}
+
+function soEq_(a,b){
+  const na = normalizeSo_(a);
+  const nb = normalizeSo_(b);
+  if (!na || !nb) return false;
+  return na === nb;
+}
+
+function idEq_(a,b){
+  const na = normalizeId_(a);
+  const nb = normalizeId_(b);
+  if (!na || !nb) return false;
+  return na === nb;
+}
+
+function sanitizeForClient_(value){
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (err) {
+    try {
+      dbg('sanitizeForClient_ error', { error: String(err) });
+    } catch (_) {}
+    return value;
+  }
+}
 function num_(v, d){ const n=parseFloat(String(v||'').replace(/[^\d.\-]/g,'')); return isFinite(n)?n:(d||0); }
 function round2_(n){ return Math.round(num_(n,0)*100)/100; }
 function money_(n){ n=num_(n,0); const s=n.toFixed(2); return '$'+s.replace(/\B(?=(\d{3})+(?!\d))/g,','); }
