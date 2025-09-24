@@ -6,6 +6,7 @@ function onOpen(){
     .addItem('🆕 New Inquiry / Create SO','admOpenNewInquiryDialog')
     .addItem('➕ Add New Customer','admOpenNewCustomerDialog')
     .addSeparator()
+    .addItem('Sales Report…','admOpenSalesReportDialog')
     .addItem('🔄 Update Client Status…','admOpenClientStatusDialog')
     .addSeparator()
     .addItem('💳 Record Payment (Wholesale)…', 'openWholesaleRecordPayment')
