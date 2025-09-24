@@ -714,6 +714,7 @@ function admSubmitNewInquiry(payload){
   put('Gold Type', metal);
   put('Priority Level', v('priorityLevel'));
   put('R&D Deadline', deadline3D);
+  put('Customer Order Tracker URL', workbook.url);
   put('Customer Sheet URL', workbook.url);
   put('Customer Folder ID', customerFolder.getId());
 
@@ -942,7 +943,9 @@ function buildStatusPayloadFromRow_(row){
     productionDeadline: formatDateYMD_(getValue('Production Deadline'))
   };
   let trackerUrl = '';
-  if (H['Customer Sheet URL']) {
+  if (H['Customer Order Tracker URL']) {
+    trackerUrl = extractUrlFromCell_(sh.getRange(row, H['Customer Order Tracker URL']));
+  } else if (H['Customer Sheet URL']) {
     trackerUrl = extractUrlFromCell_(sh.getRange(row, H['Customer Sheet URL']));
   }
   return {
@@ -1051,6 +1054,49 @@ function updateCustomerTrackerSheet_(trackerUrl, customerName, product, soDispla
   return sheet.getName();
 }
 
+function summarizeStatusChange_(arr, label, before, after){
+  const prev = String(before == null ? '' : before).trim();
+  const next = String(after == null ? '' : after).trim();
+  if (prev === next) return;
+  const display = (val) => {
+    const s = String(val == null ? '' : val).trim();
+    return s || '—';
+  };
+  arr.push({
+    label,
+    from: display(before),
+    to: display(after)
+  });
+}
+
+function buildStatusSummary_(before, after, row){
+  const summary = {
+    title: (after && after.soDisplay) || (before && before.soDisplay) || (row ? ('Row ' + row) : 'Selected Order'),
+    details: [],
+    changes: []
+  };
+  const detailSource = after || before || {};
+  const details = [];
+  if (detailSource.customerName) details.push(detailSource.customerName);
+  if (detailSource.product) details.push(detailSource.product);
+  summary.details = details;
+
+  const changes = [];
+  if (before && before.statuses && after && after.statuses) {
+    summarizeStatusChange_(changes, 'Sales Stage', before.statuses.salesStage, after.statuses.salesStage);
+    summarizeStatusChange_(changes, 'Conversion Status', before.statuses.conversionStatus, after.statuses.conversionStatus);
+    summarizeStatusChange_(changes, 'Custom Order Status', before.statuses.customOrderStatus, after.statuses.customOrderStatus);
+    summarizeStatusChange_(changes, 'In Production Status', before.statuses.inProductionStatus, after.statuses.inProductionStatus);
+  }
+  if (before && before.dates && after && after.dates) {
+    summarizeStatusChange_(changes, 'Order Date', before.dates.orderDate, after.dates.orderDate);
+    summarizeStatusChange_(changes, '3D Deadline', before.dates.threeDDeadline, after.dates.threeDDeadline);
+    summarizeStatusChange_(changes, 'Production Deadline', before.dates.productionDeadline, after.dates.productionDeadline);
+  }
+  summary.changes = changes;
+  return summary;
+}
+
 function admSubmitStatusUpdate(payload){
   const stop = T('admSubmitStatusUpdate');
   if (!payload || !payload.row) throw new Error('Active row is required.');
@@ -1060,6 +1106,9 @@ function admSubmitStatusUpdate(payload){
   const last = sh.getLastRow();
   if (row > last) throw new Error('Select a populated row in 00_Master Wholesale.');
   const H = headerIndex1_(sh);
+
+  const before = buildStatusPayloadFromRow_(row);
+
   function put(label, value){
     if (H[label]) sh.getRange(row, H[label]).setValue(value || '');
   }
@@ -1085,34 +1134,34 @@ function admSubmitStatusUpdate(payload){
   putDate('3D Deadline', payload.threeDDeadline || '');
   putDate('Production Deadline', payload.productionDeadline || '');
 
-  let trackerUrl = '';
-  if (H['Customer Sheet URL']) {
-    trackerUrl = extractUrlFromCell_(sh.getRange(row, H['Customer Sheet URL']));
-  }
-  const soValue = H['SO#'] ? sh.getRange(row, H['SO#']).getDisplayValue() : '';
-  const soDisplay = soDisplay_(soValue || '');
+  const after = buildStatusPayloadFromRow_(row);
+  const trackerUrl = after.trackerUrl || '';
   let sheetName = '';
+
   if (trackerUrl) {
     try {
       sheetName = updateCustomerTrackerSheet_(
         trackerUrl,
-        H['Customer Name'] ? sh.getRange(row, H['Customer Name']).getDisplayValue() : '',
-        H['Product'] ? sh.getRange(row, H['Product']).getDisplayValue() : '',
-        soDisplay,
+        after.customerName,
+        after.product,
+        after.soDisplay,
         {
-          salesStage: payload.salesStage || '',
-          conversionStatus: payload.conversionStatus || '',
-          customOrderStatus: payload.customOrderStatus || '',
-          inProductionStatus: payload.inProductionStatus || '',
-          orderDate: payload.orderDate || '',
-          threeDDeadline: payload.threeDDeadline || '',
-          productionDeadline: payload.productionDeadline || ''
+          salesStage: after.statuses && after.statuses.salesStage || '',
+          conversionStatus: after.statuses && after.statuses.conversionStatus || '',
+          customOrderStatus: after.statuses && after.statuses.customOrderStatus || '',
+          inProductionStatus: after.statuses && after.statuses.inProductionStatus || '',
+          orderDate: after.dates && after.dates.orderDate || '',
+          threeDDeadline: after.dates && after.dates.threeDDeadline || '',
+          productionDeadline: after.dates && after.dates.productionDeadline || ''
         }
       );
     } catch (err) {
       console.error('[admSubmitStatusUpdate] tracker update failed:', err);
     }
   }
+
+  const summary = buildStatusSummary_(before, after, row);
+
   if (stop) stop();
-  return { ok: true, trackerUrl, sheetName };
+  return { ok: true, trackerUrl, sheetName, summary };
 }
