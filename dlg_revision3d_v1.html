@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <style>
+    body { font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Arial; padding: 12px 16px; color:#202124; }
+    h2 { margin: 12px 0 8px; }
+    .muted { color:#5f6368; font-size:12px; }
+    .box { border:1px solid #e0e0e0; border-radius:8px; padding:12px; margin:10px 0; background:#fafafa; }
+    .row { display:flex; gap:12px; margin:6px 0; flex-wrap:wrap; }
+    .row > label { flex:1; min-width:160px; display:flex; flex-direction:column; gap:4px; }
+    input[type=text], input[type=date], select, textarea { padding:8px; border:1px solid #d0d0d0; border-radius:6px; background:#fff; font:inherit; }
+    textarea { min-height:120px; resize:vertical; }
+    #odooBlock textarea { min-height:220px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; white-space:pre; }
+    .actions { display:flex; justify-content:space-between; align-items:center; margin-top:12px; }
+    .btn { background:#1a73e8; color:#fff; border:none; border-radius:6px; padding:8px 14px; cursor:pointer; font-weight:600; }
+    .btn.secondary { background:#e8eaed; color:#202124; }
+    .btn:disabled { opacity:0.6; cursor:progress; }
+    .hidden { display:none; }
+    #status { margin-top:8px; font-size:13px; }
+    #status.error { color:#b00020; }
+    #status.success { color:#0b8043; }
+    #dbg { font:12px/1.4 ui-monospace, monospace; background:#fff; border:1px solid #e0e0e0; border-radius:6px; padding:8px; max-height:120px; overflow:auto; }
+    #uploads { margin:6px 0 0; padding-left:18px; }
+    #uploads li { margin:2px 0; }
+    .info-grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap:8px; font-size:13px; }
+    .info-grid span { display:flex; flex-direction:column; }
+    .info-grid b { font-weight:600; font-size:12px; color:#5f6368; text-transform:uppercase; letter-spacing:0.04em; }
+  </style>
+</head>
+<body>
+  <h2>3D Revision Request</h2>
+  <div id="status" class="muted"></div>
+
+  <div class="box">
+    <div class="info-grid">
+      <span><b>Customer</b><span id="infoCustomer">—</span></span>
+      <span><b>SO</b><span id="infoSO">—</span></span>
+      <span><b>Tracker</b><span id="infoTracker"><a id="trackerLink" href="#" target="_blank">Open</a></span></span>
+      <span><b>3D Folder</b><span id="info3D"><a id="threeDLink" href="#" target="_blank">Open</a></span></span>
+    </div>
+  </div>
+
+  <div id="step1" class="box">
+    <strong>Step 1 — Design Details</strong>
+    <div class="row">
+      <label>Product Type
+        <select id="productType"></select>
+      </label>
+      <label>Priority
+        <select id="priorityLevel"></select>
+      </label>
+      <label>Quantity
+        <input id="quantity" type="text" value="1">
+      </label>
+    </div>
+
+    <div class="row">
+      <label>Design Notes (3 bullets or free text)
+        <textarea id="DesignNotes" placeholder="- note 1&#10;- note 2&#10;- note 3"></textarea>
+      </label>
+    </div>
+
+    <div id="ringFields" class="typeFields">
+      <div class="row">
+        <label>Accent Diamond Type
+          <select id="AccentDiamondType"></select>
+        </label>
+        <label>Ring Style
+          <select id="RingStyle"></select>
+        </label>
+        <label>Metal
+          <select id="Metal"></select>
+        </label>
+      </div>
+      <div class="row">
+        <label>US Size
+          <select id="USSize"></select>
+        </label>
+        <label>Band Width (mm)
+          <input id="BandWidthMM" type="text" placeholder="e.g., 1.8">
+        </label>
+        <label>Center Stone Type
+          <input id="CenterDiamondType" type="text" placeholder="e.g., Lab"> 
+        </label>
+      </div>
+      <div class="row">
+        <label>Shape
+          <select id="Shape"></select>
+        </label>
+        <label>Diamond Dimension
+          <input id="DiamondDimension" type="text" placeholder="e.g., 10.2 x 7.1">
+        </label>
+      </div>
+    </div>
+
+    <div id="pendantFields" class="typeFields hidden">
+      <div class="row">
+        <label>Metal
+          <select id="pd_Metal"></select>
+        </label>
+        <label>Chain Style
+          <select id="pd_ChainStyle"></select>
+        </label>
+        <label>Length (in)
+          <input id="pd_LengthIn" type="text">
+        </label>
+      </div>
+      <div class="row">
+        <label>Bail Type
+          <input id="BailType" type="text">
+        </label>
+      </div>
+    </div>
+
+    <div id="chainFields" class="typeFields hidden">
+      <div class="row">
+        <label>Metal
+          <select id="ch_Metal"></select>
+        </label>
+        <label>Chain Style
+          <select id="ChainStyle"></select>
+        </label>
+        <label>Width (mm)
+          <input id="WidthMM" type="text">
+        </label>
+        <label>Length (in)
+          <input id="LengthIn" type="text">
+        </label>
+      </div>
+    </div>
+
+    <div id="earringFields" class="typeFields hidden">
+      <div class="row">
+        <label>Metal
+          <select id="er_Metal"></select>
+        </label>
+        <label>Earring Type
+          <select id="EarringType"></select>
+        </label>
+        <label>Back Type
+          <input id="BackType" type="text">
+        </label>
+      </div>
+    </div>
+
+    <div id="braceletFields" class="typeFields hidden">
+      <div class="row">
+        <label>Metal
+          <select id="br_Metal"></select>
+        </label>
+        <label>Bracelet Type
+          <select id="BraceletType"></select>
+        </label>
+        <label>Length (in)
+          <input id="br_LengthIn" type="text">
+        </label>
+      </div>
+    </div>
+
+    <div class="actions">
+      <span class="muted">Step 1 of 2 — Fill design details.</span>
+      <button class="btn" onclick="toStep2()">Next</button>
+    </div>
+  </div>
+
+  <div id="step2" class="box hidden">
+    <strong>Step 2 — Revision Metadata</strong>
+    <div id="odooBlock" class="row">
+      <label style="flex:1 1 100%">Copy into Odoo
+        <textarea id="odooText" readonly></textarea>
+      </label>
+    </div>
+    <div class="row">
+      <label>SO#
+        <input id="soInput" type="text"
+               pattern="^\s*(?:SO#?)?\s*\d{2}\.\d{4}\s*$"
+               title="Enter 12.3456 or SO12.3456">
+      </label>
+      <label>SO URL
+        <input id="soUrl" type="text" placeholder="https://...">
+      </label>
+      <label>Inquiry Date
+        <input id="inquiryDate" type="date" required>
+      </label>
+      <label>Quotation Date
+        <input id="quotationDate" type="date">
+      </label>
+    </div>
+
+    <div class="box" style="margin-top:12px; background:#fff;">
+      <strong>Upload Log (optional)</strong>
+      <div class="row">
+        <label>Upload Type
+          <select id="uploadType"></select>
+        </label>
+        <label>Choose File
+          <input id="uploadFile" type="file">
+        </label>
+        <div style="align-self:flex-end;">
+          <button class="btn secondary" type="button" onclick="mockUpload()">Add to Log</button>
+        </div>
+      </div>
+      <ul id="uploads" class="muted"></ul>
+      <div class="muted">Uploads are recorded manually for now. Attachments can be added later via Drive.</div>
+    </div>
+
+    <div class="actions">
+      <button class="btn secondary" type="button" onclick="backToStep1()">Back</button>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <span id="submitStatus" class="muted"></span>
+        <button id="submitBtn" class="btn" type="button" onclick="submitRevision()">Create Revision Entry</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="dbg" class="hidden"></div>
+
+  <script>
+    const BOOTSTRAP = <?= JSON.stringify(BOOTSTRAP || {}) ?>;
+    const state = {
+      form: {},
+      context: {},
+      copy: ''
+    };
+
+    function byId(id){ return document.getElementById(id); }
+
+    function fillSelect(el, options){
+      if (!el) return;
+      el.innerHTML = '';
+      options.forEach(opt => {
+        const o = document.createElement('option');
+        o.value = opt;
+        o.textContent = opt;
+        el.appendChild(o);
+      });
+    }
+
+    function setStatus(msg, type){
+      const el = byId('status');
+      el.textContent = msg || '';
+      if (!type) {
+        el.className = 'muted';
+      } else if (type === 'error' || type === 'success') {
+        el.className = type;
+      } else {
+        el.className = type + ' muted';
+      }
+    }
+
+    function dbg(msg){
+      const box = byId('dbg');
+      if (!box) return;
+      if (box.classList.contains('hidden')) return;
+      const line = document.createElement('div');
+      line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      box.appendChild(line);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function showFields(type){
+      ['ring','pendant','chain','earrings','bracelet'].forEach(t => {
+        const el = byId(t + 'Fields');
+        if (!el) return;
+        el.classList.toggle('hidden', t !== type);
+      });
+    }
+
+    function onProductTypeChange(){
+      const type = String(byId('productType').value || '').toLowerCase();
+      showFields(type || 'ring');
+    }
+
+    function initUI(data){
+      setStatus('');
+      state.context = data || {};
+      byId('infoCustomer').textContent = data.customerName || '—';
+      byId('infoSO').textContent = data.soDisplay || data.soPretty || '—';
+      if (data.trackerUrl) {
+        byId('trackerLink').href = data.trackerUrl;
+      }
+      if (data.threeDFolderUrl) {
+        byId('threeDLink').href = data.threeDFolderUrl;
+      }
+
+      fillSelect(byId('productType'), BOOTSTRAP.productTypes || []);
+      fillSelect(byId('priorityLevel'), BOOTSTRAP.priorityLevels || []);
+      fillSelect(byId('AccentDiamondType'), BOOTSTRAP.accentTypes || []);
+      fillSelect(byId('RingStyle'), BOOTSTRAP.ringStyles || []);
+      fillSelect(byId('Metal'), BOOTSTRAP.metals || []);
+      fillSelect(byId('USSize'), [''].concat(BOOTSTRAP.ringSizes || []));
+      fillSelect(byId('Shape'), BOOTSTRAP.shapes || []);
+      fillSelect(byId('ChainStyle'), BOOTSTRAP.chainStyles || []);
+      fillSelect(byId('EarringType'), BOOTSTRAP.earringTypes || []);
+      fillSelect(byId('BraceletType'), BOOTSTRAP.braceletTypes || []);
+      fillSelect(byId('uploadType'), BOOTSTRAP.uploadTypes || []);
+      fillSelect(byId('pd_ChainStyle'), BOOTSTRAP.chainStyles || []);
+      fillSelect(byId('pd_Metal'), BOOTSTRAP.metals || []);
+      fillSelect(byId('ch_Metal'), BOOTSTRAP.metals || []);
+      fillSelect(byId('er_Metal'), BOOTSTRAP.metals || []);
+      fillSelect(byId('br_Metal'), BOOTSTRAP.metals || []);
+
+      const pre = data.prefill || {};
+      const assign = (id, val) => { const el = byId(id); if (el) el.value = val == null ? '' : val; };
+      assign('productType', pre.productType || 'Ring');
+      assign('priorityLevel', pre.priorityLevel || '');
+      assign('quantity', pre.quantity || '1');
+      assign('DesignNotes', pre.DesignNotes || '');
+      ['AccentDiamondType','RingStyle','Metal','USSize','BandWidthMM','CenterDiamondType','Shape','DiamondDimension',
+       'ChainStyle','LengthIn','BailType','WidthMM','EarringType','BackType','BraceletType']
+        .forEach(id => assign(id, pre[id] || ''));
+      assign('pd_Metal', pre.Metal || '');
+      assign('pd_ChainStyle', pre.ChainStyle || '');
+      assign('pd_LengthIn', pre.LengthIn || '');
+      assign('ch_Metal', pre.Metal || '');
+      assign('er_Metal', pre.Metal || '');
+      assign('br_Metal', pre.Metal || '');
+      assign('br_LengthIn', pre.LengthIn || '');
+
+      assign('soInput', data.soDisplay || data.soPretty || '');
+      assign('soUrl', data.odooUrl || '');
+      assign('inquiryDate', data.defaultInquiryDate || data.today || '');
+      assign('quotationDate', data.defaultQuotationDate || '');
+
+      onProductTypeChange();
+    }
+
+    function gatherForm(){
+      const type = byId('productType').value || 'Ring';
+      const form = {
+        productType: type,
+        priorityLevel: byId('priorityLevel').value || '',
+        quantity: byId('quantity').value || '',
+        DesignNotes: byId('DesignNotes').value || '',
+        AccentDiamondType: byId('AccentDiamondType').value || '',
+        RingStyle: byId('RingStyle').value || '',
+        Metal: byId('Metal').value || '',
+        USSize: byId('USSize').value || '',
+        BandWidthMM: byId('BandWidthMM').value || '',
+        CenterDiamondType: byId('CenterDiamondType').value || '',
+        Shape: byId('Shape').value || '',
+        DiamondDimension: byId('DiamondDimension').value || '',
+        ChainStyle: byId('ChainStyle').value || '',
+        LengthIn: byId('LengthIn').value || '',
+        BailType: byId('BailType').value || '',
+        WidthMM: byId('WidthMM').value || '',
+        EarringType: byId('EarringType').value || '',
+        BackType: byId('BackType').value || '',
+        BraceletType: byId('BraceletType').value || ''
+      };
+      if (type.toLowerCase() === 'pendant') {
+        form.Metal = byId('pd_Metal').value || form.Metal;
+        form.ChainStyle = byId('pd_ChainStyle').value || form.ChainStyle;
+        form.LengthIn = byId('pd_LengthIn').value || form.LengthIn;
+      }
+      if (type.toLowerCase() === 'chain') {
+        form.Metal = byId('ch_Metal').value || form.Metal;
+      }
+      if (type.toLowerCase() === 'earrings') {
+        form.Metal = byId('er_Metal').value || form.Metal;
+      }
+      if (type.toLowerCase() === 'bracelet') {
+        form.Metal = byId('br_Metal').value || form.Metal;
+        form.LengthIn = byId('br_LengthIn').value || form.LengthIn;
+      }
+      return form;
+    }
+
+    function toStep2(){
+      const form = gatherForm();
+      setStatus('Preparing preview…');
+      google.script.run.withSuccessHandler(text => {
+        state.copy = text || '';
+        byId('odooText').value = text || '';
+        state.form = form;
+        setStatus('');
+        byId('step1').classList.add('hidden');
+        byId('step2').classList.remove('hidden');
+      }).withFailureHandler(err => {
+        setStatus(err && err.message ? err.message : String(err), 'error');
+      }).previewRevOdooPaste(form);
+    }
+
+    function backToStep1(){
+      byId('step2').classList.add('hidden');
+      byId('step1').classList.remove('hidden');
+      setStatus('');
+    }
+
+    function gatherSubmit(){
+      return {
+        form: state.form,
+        so: byId('soInput').value || '',
+        soUrl: byId('soUrl').value || '',
+        inquiryDate: byId('inquiryDate').value || '',
+        quotationDate: byId('quotationDate').value || '',
+        odooText: state.copy
+      };
+    }
+
+    function submitRevision(){
+      const payload = gatherSubmit();
+      const btn = byId('submitBtn');
+      const status = byId('submitStatus');
+      status.textContent = 'Submitting…';
+      btn.disabled = true;
+      google.script.run.withSuccessHandler(res => {
+        btn.disabled = false;
+        status.textContent = '';
+        if (res && res.ok) {
+          setStatus('Revision #' + res.revision + ' saved to ' + res.sheetName + '.', 'success');
+          google.script.host.close();
+        } else {
+          setStatus('Unexpected response from server.', 'error');
+        }
+      }).withFailureHandler(err => {
+        btn.disabled = false;
+        status.textContent = '';
+        setStatus(err && err.message ? err.message : String(err), 'error');
+      }).submit3DRevision(payload);
+    }
+
+    function mockUpload(){
+      const fileInput = byId('uploadFile');
+      const type = byId('uploadType').value || 'File';
+      if (!fileInput.files || !fileInput.files.length) {
+        setStatus('Select a file before adding to the log.', 'error');
+        return;
+      }
+      const file = fileInput.files[0];
+      const li = document.createElement('li');
+      li.textContent = `${type}: ${file.name}`;
+      byId('uploads').appendChild(li);
+      fileInput.value = '';
+      setStatus('File noted in upload log. Upload to Drive manually if needed.');
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      google.script.run.withSuccessHandler(initUI).withFailureHandler(err => {
+        setStatus(err && err.message ? err.message : String(err), 'error');
+      }).rev3d_init();
+      byId('productType').addEventListener('change', onProductTypeChange);
+    });
+  </script>
+</body>
+</html>

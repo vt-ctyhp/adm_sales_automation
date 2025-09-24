@@ -6,6 +6,8 @@ function onOpen(){
     .addItem('New Inquiry / Create SO','admOpenNewInquiryDialog')
     .addItem('➕ Add New Customer','admOpenNewCustomerDialog')
     .addSeparator()
+    .addItem('♻️ 3D Revision Request','open3DRevision')
+    .addSeparator()
     .addItem('Record Payment (wholesale)…', 'openWholesaleRecordPayment')
     .addItem('Payment Summary (selected SO)…', 'openWholesalePaymentSummary')
     .addSeparator()

@@ -522,7 +522,22 @@ function findOrCreateCustomerWorkbook_(customerFolder, customerName){
   return { id: id, url: file.getUrl(), existed: false };
 }
 
-function resolveCustomerWorkbookFor_(customerName){
+function resolveCustomerWorkbookFor_(customerName, opts){
+  opts = opts || {};
+  const master = opts.master || null;
+  const masterHeaders = master && master.headers;
+  let masterUrl = '';
+
+  if (master && master.sheet && masterHeaders && masterHeaders['Customer Order Tracker URL']) {
+    const col = masterHeaders['Customer Order Tracker URL'];
+    const raw = String(master.values[col-1] || '').trim();
+    const linkOrText = getCellLinkOrText_(master.sheet, master.row, col);
+    const best = String(linkOrText || raw || '').trim();
+    if (/^https?:/i.test(best)) {
+      masterUrl = best;
+    }
+  }
+
   const crm = ensureCRMTab_();
   const H = headerIndex1_(crm);
   const iName = H['Business Name'] || 0;
@@ -539,7 +554,7 @@ function resolveCustomerWorkbookFor_(customerName){
 
   const urlRaw  = H['Customer Order Tracker URL'] ? String(crm.getRange(row, H['Customer Order Tracker URL']).getValue()||'').trim() : '';
   const urlRich = H['Customer Orders'] ? _linkUrlFromRichCell_(crm, row, 'Customer Orders') : '';
-  let url = urlRaw || urlRich;
+  let url = masterUrl || urlRaw || urlRich;
 
   let id = '', existed = true;
   if (!url) {
@@ -556,6 +571,23 @@ function resolveCustomerWorkbookFor_(customerName){
     const m = url.match(/[-\w]{25,}/);
     id = m ? m[0] : '';
   }
+
+  if (!id) {
+    const m2 = url && url.match(/[-\w]{25,}/);
+    if (m2) id = m2[0];
+  }
+
+  if (master && master.sheet && masterHeaders && masterHeaders['Customer Order Tracker URL'] && /^https?:/i.test(url||'')) {
+    const col = masterHeaders['Customer Order Tracker URL'];
+    const rng = master.sheet.getRange(master.row, col);
+    try {
+      const rt = SpreadsheetApp.newRichTextValue().setText('Open').setLinkUrl(url).build();
+      rng.setRichTextValue(rt);
+    } catch (e) {
+      try { rng.setValue(url); } catch(_){}
+    }
+  }
+
   return { id, url, existed };
 }
 
