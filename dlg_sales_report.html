@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <style>
+    body { font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Arial; padding:16px; background:#f9fafb; }
+    h2 { margin: 0 0 12px; }
+    .box { background:#fff; border:1px solid #e5e7eb; border-radius:8px; padding:16px; margin-bottom:16px; }
+    .row { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:12px; }
+    .row > label { flex:1; min-width:200px; display:flex; flex-direction:column; font-weight:600; color:#374151; }
+    select { padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; background:#fff; font:inherit; }
+    .actions { display:flex; justify-content:flex-end; gap:8px; }
+    button { background:#2563eb; border:none; color:#fff; padding:8px 16px; border-radius:6px; font-weight:600; cursor:pointer; }
+    button:disabled { opacity:0.6; cursor:default; }
+    .muted { color:#6b7280; font-size:13px; }
+    #resultBox.hidden, #filtersBox.hidden { display:none; }
+    a { color:#2563eb; }
+  </style>
+</head>
+<body>
+  <h2>Sales Report</h2>
+  <div id="message" class="muted">Loading options…</div>
+
+  <form id="filtersBox" class="box hidden">
+    <div class="row">
+      <label>Sales Stage
+        <select id="salesStage"></select>
+      </label>
+      <label>Conversion Status
+        <select id="conversionStatus"></select>
+      </label>
+    </div>
+    <div class="row">
+      <label>Custom Order Status
+        <select id="customOrderStatus"></select>
+      </label>
+      <label>In Production Status
+        <select id="inProductionStatus"></select>
+      </label>
+    </div>
+    <div class="actions">
+      <button type="submit" id="generateBtn">Generate PDF</button>
+    </div>
+  </form>
+
+  <div id="resultBox" class="box hidden">
+    <div id="resultMessage" class="muted"></div>
+  </div>
+
+  <script>
+    const $ = id => document.getElementById(id);
+    let OPTIONS = null;
+
+    function setMessage(text, type) {
+      const el = $('message');
+      el.textContent = text || '';
+      el.className = 'muted';
+      if (type === 'err') {
+        el.style.color = '#b91c1c';
+      } else if (type === 'ok') {
+        el.style.color = '#166534';
+      } else {
+        el.style.color = '#6b7280';
+      }
+    }
+
+    function fillSelect(select, list) {
+      if (!select) return;
+      select.innerHTML = '';
+      const any = document.createElement('option');
+      any.value = '';
+      any.textContent = 'All';
+      select.appendChild(any);
+      const blank = document.createElement('option');
+      blank.value = '__BLANK__';
+      blank.textContent = '(Blank)';
+      select.appendChild(blank);
+      (list || []).forEach(opt => {
+        const val = String(opt || '').trim();
+        if (!val) return;
+        const o = document.createElement('option');
+        o.value = val;
+        o.textContent = val;
+        select.appendChild(o);
+      });
+      select.value = '';
+    }
+
+    function bootstrap() {
+      setMessage('Loading options…');
+      google.script.run.withSuccessHandler(res => {
+        OPTIONS = (res && res.options) || {};
+        fillSelect($('salesStage'), OPTIONS.salesStage);
+        fillSelect($('conversionStatus'), OPTIONS.conversionStatus);
+        fillSelect($('customOrderStatus'), OPTIONS.customOrderStatus);
+        fillSelect($('inProductionStatus'), OPTIONS.inProductionStatus);
+        $('filtersBox').classList.remove('hidden');
+        setMessage('Choose filters and generate the report.', 'ok');
+      }).withFailureHandler(err => {
+        const msg = err && err.message ? err.message : 'Failed to load options.';
+        setMessage(msg, 'err');
+      }).admSalesReportBootstrap();
+    }
+
+    function renderResult(res) {
+      const box = $('resultBox');
+      const msg = $('resultMessage');
+      if (!res || res.error) {
+        msg.textContent = res && res.error ? res.error : 'Unable to generate the report.';
+        msg.style.color = '#b91c1c';
+        box.classList.remove('hidden');
+        return;
+      }
+      const parts = [];
+      parts.push(`Report generated with ${res.rowCount || 0} row${(res.rowCount || 0) === 1 ? '' : 's'}.`);
+      if (res.pdfUrl) {
+        parts.push(`<a href="${res.pdfUrl}" target="_blank" rel="noopener">Open PDF</a>`);
+      }
+      if (res.fileName) {
+        parts.push(res.fileName);
+      }
+      msg.innerHTML = parts.join(' • ');
+      msg.style.color = '#166534';
+      box.classList.remove('hidden');
+    }
+
+    $('filtersBox').addEventListener('submit', evt => {
+      evt.preventDefault();
+      const btn = $('generateBtn');
+      btn.disabled = true;
+      setMessage('Generating report…');
+      $('resultBox').classList.add('hidden');
+      const payload = {
+        salesStage: $('salesStage').value,
+        conversionStatus: $('conversionStatus').value,
+        customOrderStatus: $('customOrderStatus').value,
+        inProductionStatus: $('inProductionStatus').value
+      };
+      google.script.run.withSuccessHandler(res => {
+        btn.disabled = false;
+        setMessage('Report ready.', 'ok');
+        renderResult(res);
+      }).withFailureHandler(err => {
+        btn.disabled = false;
+        const msg = err && err.message ? err.message : 'Failed to generate the report.';
+        setMessage(msg, 'err');
+        renderResult({ error: msg });
+      }).admGenerateSalesReport(payload);
+    });
+
+    bootstrap();
+  </script>
+</body>
+</html>
