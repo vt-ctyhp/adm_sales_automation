@@ -99,9 +99,16 @@ function refresh(){
     invoiceGroupId: $('#gid').value.trim()
   });
 }
+function asArray(value){
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== 'object') return [];
+  return Object.values(value).filter(v => v !== null && v !== undefined);
+}
+
 function render(res){
   console.debug('[ADM_DEBUG] summary ->', res);
-  if (!res || !Array.isArray(res.groups) || !res.groups.length) {
+  const groups = asArray(res && res.groups);
+  if (!res || !groups.length) {
     $('#out').classList.remove('hint');
     $('#out').innerHTML = `<div class="card empty">No documents found for the selected scope.</div>`;
     return;
@@ -119,14 +126,16 @@ function render(res){
       </div>
     </div>`;
 
-  const warningHtml = (res.warnings && res.warnings.length) ? `
+  const warnings = asArray(res.warnings);
+  const warningHtml = warnings.length ? `
     <div class="warnings">
       <strong>Warnings &amp; Alerts</strong>
-      <ul>${res.warnings.map(w => `<li>${safe(w)}</li>`).join('')}</ul>
+      <ul>${warnings.map(w => `<li>${safe(w)}</li>`).join('')}</ul>
     </div>` : '';
 
-  const groupsHtml = res.groups.map(group => {
-    const docRows = group.docs && group.docs.length ? group.docs.map(doc => {
+  const groupsHtml = groups.map(group => {
+    const docs = asArray(group && group.docs);
+    const docRows = docs.length ? docs.map(doc => {
       const rowClass = doc.isOverdue ? ' class="overdue"' : '';
       return `
         <tr${rowClass}>
@@ -141,17 +150,18 @@ function render(res){
         </tr>`;
     }).join('') : `<tr><td colspan="8" class="hint">No documents in this group.</td></tr>`;
 
-    const groupWarnings = group.warnings && group.warnings.length
-      ? `<div class="group-warnings"><strong>Group alerts</strong><ul>${group.warnings.map(w => `<li>${safe(w)}</li>`).join('')}</ul></div>`
+    const groupWarningsList = asArray(group && group.warnings);
+    const groupWarnings = groupWarningsList.length
+      ? `<div class="group-warnings"><strong>Group alerts</strong><ul>${groupWarningsList.map(w => `<li>${safe(w)}</li>`).join('')}</ul></div>`
       : '';
 
     const badges = [];
-    if (group.hasOverdue) badges.push('<span class="badge overdue">Overdue</span>');
+    if (group && group.hasOverdue) badges.push('<span class="badge overdue">Overdue</span>');
 
     return `
-      <details class="group" ${group.hasOverdue ? 'open' : ''}>
+      <details class="group" ${(group && group.hasOverdue) ? 'open' : ''}>
         <summary>
-          <span class="group-title">${safe(group.label || 'Invoice Group')}</span>
+          <span class="group-title">${safe(group && group.label || 'Invoice Group')}</span>
           <span class="group-meta">SOs: ${safe(formatList(group.soNumbers || []))}</span>
           <span class="group-meta">Due Next: ${safe(group.nextDueDateDisplay || '—')}</span>
           <span class="spacer"></span>
